@@ -24,7 +24,11 @@ Manual testing has passed. Coverage sits around 94% (floor is 80%, enforced via
 
 Post-v1 additions (also reflected in `SPEC.md`, not just here):
 `-tf`/`--target-file` (v0.1.2) — line-delimited target list, an alternative
-to repeating `--target`.
+to repeating `--target`. Second-instance guard, three CLI flag renames
+(`--listen`→`--listen-address`, `--upstream`→`--upstream-proxy`,
+`--capture-all`→`--target-all`, the latter renamed all the way through
+internal code and `manifest.json`'s schema key), and full `--help` text on
+every flag (v0.2.0).
 
 ## Commands
 
@@ -115,11 +119,12 @@ touching the affected area:
   (confirmed with the user during the build) — `tls/ca.py`'s
   `default_state_dir()` is the single source of truth for this.
 - **`exceptions.py` has more classes than `SPEC.md` §8's literal list.**
-  `ConfigError` (bad `--listen`, conflicting upstream flags) and
-  `CaptureControlError` + 3 subclasses (`CaptureAlreadyActiveError`,
-  `CaptureNameConflictError`, `NoActiveCaptureError`) were added because §2's
-  prose describes exactly these error conditions but §8's hierarchy — written
-  from a proxy/TLS lens — doesn't have a natural home for them.
+  `ConfigError` (bad `--listen-address`, conflicting upstream flags, a
+  bind/socket already in use) and `CaptureControlError` + 3 subclasses
+  (`CaptureAlreadyActiveError`, `CaptureNameConflictError`,
+  `NoActiveCaptureError`) were added because §2's prose describes exactly
+  these error conditions but §8's hierarchy — written from a proxy/TLS lens —
+  doesn't have a natural home for them.
 - **`proxy/_http_cycle.py`** isn't named in §13's module list. It holds the
   h11 request/response-cycle logic shared verbatim by `intercept.py` (TLS) and
   `plain_http.py` (cleartext) via a small `AsyncStream` protocol, rather than
@@ -130,17 +135,23 @@ touching the affected area:
   `cli.py`'s `proxy start` needs foreground orchestration + signal handling —
   exactly what §13's one-line description says the file is for. Built in
   Phase 7 alongside `cli.py`.
-- **`--target`/`-tf`/`--target-regex`/`--capture-all`: at least one is
+- **`--target`/`-tf`/`--target-regex`/`--target-all`: at least one is
   required.** §2's CLI table marks `--target` itself as "required (at least
-  one)," but `-tf`/`--target-file`, `--target-regex`, or `--capture-all`
+  one)," but `-tf`/`--target-file`, `--target-regex`, or `--target-all`
   alone are all treated as satisfying that too (each is a legitimate
   standalone scope mechanism per §3.3/§3.4/§3.7). `-tf` entries are merged
   into `DaemonConfig.targets` in `cli.py` before `Daemon.__init__` runs its
   check, so the daemon itself never distinguishes the two sources.
-- **No guard against a second `proxy start` instance.** Two daemons would race
-  for the same control socket and `--listen` port. Not spec-required (only
-  single-*capture* enforcement is), so left as a known gap rather than adding
-  unspecified defensive logic.
+- **Second-instance guard** (v0.2.0): `ControlServer.start()`
+  (`recording/control.py`) checks whether an existing control socket file has
+  something actually listening behind it before unlinking/rebinding — if so,
+  raises `ConfigError` instead of silently stealing the running daemon's
+  socket. `ProxyListener.start()` wraps a `--listen-address` port collision
+  into `ConfigError` too, instead of a raw traceback. `Daemon.start()` checks
+  the control socket before binding the listener, so the common case (same
+  default `--listen-address` reused) surfaces the more specific
+  "another secondeye daemon is already running" message. A stale socket file
+  from an unclean shutdown is still reused normally.
 - **RSA 2048** for both the CA and per-SNI leaf keys — not spec-mandated,
   chosen for simplicity/compatibility. Leaf certs include an explicit
   Authority Key Identifier (see testing philosophy above for why that

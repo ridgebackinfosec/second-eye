@@ -204,7 +204,7 @@ class TestBuildManifest:
             ended_at=_at(10),
             targets=["example.com"],
             target_regex=None,
-            capture_all=False,
+            target_all=False,
             upstream="127.0.0.1:8080",
             no_upstream=False,
             classified=classified,
@@ -219,7 +219,7 @@ class TestBuildManifest:
         scope = manifest["scope"]
         assert isinstance(scope, dict)
         assert scope["targets"] == ["example.com"]
-        assert scope["capture_all"] is False
+        assert scope["target_all"] is False
         assert scope["no_upstream"] is False
 
         stats = manifest["stats"]
@@ -236,7 +236,7 @@ class TestBuildManifest:
         assert isinstance(manifest_flows, list)
         assert len(manifest_flows) == 2  # static asset excluded
 
-    def test_capture_all_and_target_regex_reflected_in_scope(self) -> None:
+    def test_target_all_and_target_regex_reflected_in_scope(self) -> None:
         classified = classify_entries([])
         flows = build_flows(classified)
         manifest = build_manifest(
@@ -245,7 +245,7 @@ class TestBuildManifest:
             ended_at=_at(1),
             targets=[],
             target_regex=["^dev-.*"],
-            capture_all=True,
+            target_all=True,
             upstream=None,
             no_upstream=True,
             classified=classified,
@@ -253,7 +253,7 @@ class TestBuildManifest:
         )
         scope = manifest["scope"]
         assert isinstance(scope, dict)
-        assert scope["capture_all"] is True
+        assert scope["target_all"] is True
         assert scope["target_regex"] == ["^dev-.*"]
         assert scope["no_upstream"] is True
         assert scope["upstream"] is None

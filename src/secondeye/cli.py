@@ -54,52 +54,182 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="secondeye")
+    parser = argparse.ArgumentParser(
+        prog="secondeye",
+        description="A scope-gated, passive HTTP/HTTPS recording proxy for offensive "
+        "security operators.",
+    )
     nouns = parser.add_subparsers(dest="noun", required=True)
 
-    proxy = nouns.add_parser("proxy")
+    proxy = nouns.add_parser("proxy", help="Run and control the recording proxy daemon.")
     proxy_verbs = proxy.add_subparsers(dest="verb", required=True)
 
-    start = proxy_verbs.add_parser("start")
-    start.add_argument("--target", action="append", default=[])
-    start.add_argument("-tf", "--target-file", action="append", default=[], type=Path)
-    start.add_argument("--target-regex", action="append", default=[])
-    start.add_argument("--listen", default=_DEFAULT_LISTEN)
-    start.add_argument("--upstream", default=_DEFAULT_UPSTREAM)
-    start.add_argument("--no-upstream", action="store_true")
-    start.add_argument("--upstream-ca", type=Path, default=None)
-    start.add_argument("--upstream-insecure", action="store_true")
-    start.add_argument("--capture-all", action="store_true")
-    start.add_argument("--cluster-window", type=int, default=2000)
-    start.add_argument("--max-connections", type=int, default=256)
-    start.add_argument("-v", "--verbose", action="store_true")
-    start.add_argument("-q", "--quiet", action="store_true")
+    start = proxy_verbs.add_parser(
+        "start",
+        description="Start the secondeye daemon in the foreground. Stays running until "
+        "Ctrl+C or 'secondeye proxy stop', auto-flushing any active capture on exit.",
+    )
+    start.add_argument(
+        "--target",
+        action="append",
+        default=[],
+        help="A domain to scope in, matched exactly plus all subdomains, or an explicit "
+        "glob (e.g. '*.corp.internal'). Repeatable. At least one of --target, "
+        "--target-file, --target-regex, or --target-all is required.",
+    )
+    start.add_argument(
+        "-tf",
+        "--target-file",
+        action="append",
+        default=[],
+        type=Path,
+        help="A line-delimited file of --target-style entries (one per line; blank "
+        "lines and lines starting with # are ignored). Repeatable, and merges with "
+        "any --target values. Satisfies the 'at least one target' requirement on "
+        "its own.",
+    )
+    start.add_argument(
+        "--target-regex",
+        action="append",
+        default=[],
+        help="A regular expression to scope in, for patterns a glob can't express "
+        "(alternation, numeric ranges, wildcards on both sides). Repeatable. Prefer "
+        "--target/--target-file for the common case.",
+    )
+    start.add_argument(
+        "--listen-address",
+        default=_DEFAULT_LISTEN,
+        help=f"The host:port the proxy listens on, as 'host:port' (e.g. '[::1]:8079' "
+        f"for IPv6). Host must be loopback (127.0.0.1 or ::1) — no override exists. "
+        f"Default: {_DEFAULT_LISTEN}.",
+    )
+    start.add_argument(
+        "--upstream-proxy",
+        default=_DEFAULT_UPSTREAM,
+        help=f"The upstream intercepting proxy's host:port (e.g. Burp or ZAP) to chain "
+        f"in-scope traffic through. Ignored if --no-upstream is set. "
+        f"Default: {_DEFAULT_UPSTREAM}.",
+    )
+    start.add_argument(
+        "--no-upstream",
+        action="store_true",
+        help="Skip the upstream proxy entirely and connect directly to each "
+        "destination, with full system trust store validation on that leg.",
+    )
+    start.add_argument(
+        "--upstream-ca",
+        type=Path,
+        default=None,
+        help="PEM file of the upstream proxy's CA certificate, used to validate the "
+        "secondeye-to-upstream TLS leg. Mutually exclusive with --upstream-insecure. "
+        "See 'secondeye ca import-upstream' to fetch one.",
+    )
+    start.add_argument(
+        "--upstream-insecure",
+        action="store_true",
+        help="Skip TLS verification on the upstream leg only (logs a warning at "
+        "startup). Mutually exclusive with --upstream-ca.",
+    )
+    start.add_argument(
+        "--target-all",
+        action="store_true",
+        help="Bypass scope matching entirely: every domain is terminated/inspected "
+        "for the life of this daemon. Useful for flows that redirect through "
+        "third-party domains (OAuth/OIDC) that --target was never meant to "
+        "enumerate. Recording still only happens while a capture is active.",
+    )
+    start.add_argument(
+        "--cluster-window",
+        type=int,
+        default=2000,
+        help="Milliseconds within which repeated near-identical requests (e.g. "
+        "polling) are clustered together in ANALYSIS.md instead of listed "
+        "individually. Default: 2000.",
+    )
+    start.add_argument(
+        "--max-connections",
+        type=int,
+        default=256,
+        help="Maximum number of simultaneous client connections the proxy will "
+        "accept. Default: 256.",
+    )
+    start.add_argument(
+        "-v", "--verbose", action="store_true", help="Log at DEBUG level instead of INFO."
+    )
+    start.add_argument(
+        "-q", "--quiet", action="store_true", help="Log at WARNING level instead of INFO."
+    )
     start.set_defaults(handler=_cmd_proxy_start)
 
-    proxy_verbs.add_parser("stop").set_defaults(handler=_cmd_proxy_stop)
-    proxy_verbs.add_parser("status").set_defaults(handler=_cmd_proxy_status)
+    proxy_verbs.add_parser(
+        "stop", help="Stop a running secondeye daemon from another terminal."
+    ).set_defaults(handler=_cmd_proxy_stop)
+    proxy_verbs.add_parser(
+        "status", help="Report whether a daemon is running, its scope, and active capture."
+    ).set_defaults(handler=_cmd_proxy_status)
 
-    capture = nouns.add_parser("capture")
+    capture = nouns.add_parser(
+        "capture", help="Control recording windows against a running proxy daemon."
+    )
     capture_verbs = capture.add_subparsers(dest="verb", required=True)
 
-    cap_start = capture_verbs.add_parser("start")
-    cap_start.add_argument("--name", required=True)
+    cap_start = capture_verbs.add_parser(
+        "start", description="Start recording a named window of in-scope traffic."
+    )
+    cap_start.add_argument(
+        "--name",
+        required=True,
+        help="A label for this capture. Must be unique among today's captures for the "
+        "current target; used in the output directory name.",
+    )
     cap_start.set_defaults(handler=_cmd_capture_start)
 
-    capture_verbs.add_parser("stop").set_defaults(handler=_cmd_capture_stop)
-    capture_verbs.add_parser("list").set_defaults(handler=_cmd_capture_list)
+    capture_verbs.add_parser(
+        "stop",
+        help="Stop the active capture and write raw.har/manifest.json/ANALYSIS.md.",
+    ).set_defaults(handler=_cmd_capture_stop)
+    capture_verbs.add_parser(
+        "list", help="List captures completed so far during this daemon run."
+    ).set_defaults(handler=_cmd_capture_list)
 
-    ca = nouns.add_parser("ca")
+    ca = nouns.add_parser("ca", help="Manage secondeye's root CA and upstream trust.")
     ca_verbs = ca.add_subparsers(dest="verb", required=True)
 
-    ca_export = ca_verbs.add_parser("export")
-    ca_export.add_argument("--format", choices=["der", "pem"], default="pem")
+    ca_export = ca_verbs.add_parser(
+        "export",
+        description="Export secondeye's root CA for import into a browser/device trust store.",
+    )
+    ca_export.add_argument(
+        "--format",
+        choices=["der", "pem"],
+        default="pem",
+        help="Output encoding, written to stdout. Default: pem.",
+    )
     ca_export.set_defaults(handler=_cmd_ca_export)
 
-    ca_import = ca_verbs.add_parser("import-upstream")
-    ca_import.add_argument("--from-burp", action="store_true", required=True)
-    ca_import.add_argument("--upstream", default=_DEFAULT_UPSTREAM)
-    ca_import.add_argument("--output", type=Path, default=Path("burp-ca.pem"))
+    ca_import = ca_verbs.add_parser(
+        "import-upstream",
+        description="Fetch an upstream intercepting proxy's CA certificate for use "
+        "with 'proxy start --upstream-ca'.",
+    )
+    ca_import.add_argument(
+        "--from-burp",
+        action="store_true",
+        required=True,
+        help="Fetch the CA from Burp Suite's well-known /cert export endpoint. "
+        "Currently the only supported source; required.",
+    )
+    ca_import.add_argument(
+        "--upstream-proxy",
+        default=_DEFAULT_UPSTREAM,
+        help=f"The upstream proxy's host:port to fetch the CA from. Default: {_DEFAULT_UPSTREAM}.",
+    )
+    ca_import.add_argument(
+        "--output",
+        type=Path,
+        default=Path("burp-ca.pem"),
+        help="Where to write the converted PEM certificate. Default: burp-ca.pem.",
+    )
     ca_import.set_defaults(handler=_cmd_ca_import_upstream)
 
     return parser
@@ -112,13 +242,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _cmd_proxy_start(args: argparse.Namespace) -> int:
     _configure_logging(args)
-    listen_host, listen_port = _parse_host_port(args.listen, _DEFAULT_LISTEN_PORT)
+    listen_host, listen_port = _parse_host_port(args.listen_address, _DEFAULT_LISTEN_PORT)
 
     if args.no_upstream:
         upstream_host: str | None = None
         upstream_port: int | None = None
     else:
-        upstream_host, upstream_port = _parse_host_port(args.upstream, _DEFAULT_UPSTREAM_PORT)
+        upstream_host, upstream_port = _parse_host_port(args.upstream_proxy, _DEFAULT_UPSTREAM_PORT)
 
     targets = list(args.target)
     for target_file in args.target_file:
@@ -134,7 +264,7 @@ def _cmd_proxy_start(args: argparse.Namespace) -> int:
         no_upstream=args.no_upstream,
         upstream_ca=args.upstream_ca,
         upstream_insecure=args.upstream_insecure,
-        capture_all=args.capture_all,
+        target_all=args.target_all,
         cluster_window_ms=args.cluster_window,
         max_connections=args.max_connections,
         state_dir=default_state_dir(),
@@ -300,7 +430,7 @@ def _cmd_ca_export(args: argparse.Namespace) -> int:
 
 
 def _cmd_ca_import_upstream(args: argparse.Namespace) -> int:
-    host, port = _parse_host_port(args.upstream, _DEFAULT_UPSTREAM_PORT)
+    host, port = _parse_host_port(args.upstream_proxy, _DEFAULT_UPSTREAM_PORT)
     der_bytes = asyncio.run(_fetch_upstream_cert(host, port))
     certificate = x509.load_der_x509_certificate(der_bytes)
     pem_bytes = certificate.public_bytes(serialization.Encoding.PEM)
@@ -437,8 +567,8 @@ def _format_scope(scope: dict[str, object]) -> str:
     assert isinstance(target_regex, list)
     parts = [str(t) for t in targets] + [str(t) for t in target_regex]
     scope_str = ", ".join(parts) if parts else "(none)"
-    if scope.get("capture_all"):
-        scope_str += " [--capture-all]"
+    if scope.get("target_all"):
+        scope_str += " [--target-all]"
     return scope_str
 
 

@@ -56,7 +56,7 @@ class TestBoundPortBeforeStart:
             listen_host="127.0.0.1",
             listen_port=0,
             scope_matcher=ScopeMatcher(),
-            capture_all=False,
+            target_all=False,
             max_connections=10,
             connect_remote=_unused_connector,
             on_in_scope=_unused_handler,
@@ -93,12 +93,42 @@ class TestProxyListenerConstruction:
                 listen_host="0.0.0.0",
                 listen_port=0,
                 scope_matcher=ScopeMatcher(),
-                capture_all=False,
+                target_all=False,
                 max_connections=10,
                 connect_remote=_unused_connector,
                 on_in_scope=_unused_handler,
                 on_plain_http=_unused_plain_http_handler,
             )
+
+
+class TestSecondInstanceGuard:
+    async def test_second_listener_on_same_port_raises_config_error(self) -> None:
+        first = ProxyListener(
+            listen_host="127.0.0.1",
+            listen_port=0,
+            scope_matcher=ScopeMatcher(),
+            target_all=False,
+            max_connections=10,
+            connect_remote=_unused_connector,
+            on_in_scope=_unused_handler,
+            on_plain_http=_unused_plain_http_handler,
+        )
+        await first.start()
+        try:
+            second = ProxyListener(
+                listen_host="127.0.0.1",
+                listen_port=first.bound_port,
+                scope_matcher=ScopeMatcher(),
+                target_all=False,
+                max_connections=10,
+                connect_remote=_unused_connector,
+                on_in_scope=_unused_handler,
+                on_plain_http=_unused_plain_http_handler,
+            )
+            with pytest.raises(ConfigError):
+                await second.start()
+        finally:
+            await first.stop()
 
 
 async def _unused_connector(
@@ -153,7 +183,7 @@ class TestConnectRoutingUnit:
             listen_host="127.0.0.1",
             listen_port=0,
             scope_matcher=ScopeMatcher(targets=["sni-test.example"]),
-            capture_all=False,
+            target_all=False,
             max_connections=10,
             connect_remote=_unused_connector,
             on_in_scope=on_in_scope,
@@ -190,7 +220,7 @@ class TestConnectRoutingUnit:
             listen_host="127.0.0.1",
             listen_port=0,
             scope_matcher=ScopeMatcher(targets=["totally-different.example"]),
-            capture_all=False,
+            target_all=False,
             max_connections=10,
             connect_remote=fake_connect,
             on_in_scope=_unused_handler,
@@ -214,7 +244,7 @@ class TestConnectRoutingUnit:
 
         assert connector_calls == [("sni-test.example", 8443)]
 
-    async def test_capture_all_routes_no_sni_connection_in_scope_using_connect_host(
+    async def test_target_all_routes_no_sni_connection_in_scope_using_connect_host(
         self,
     ) -> None:
         calls: list[tuple[str, int, bytes]] = []
@@ -233,7 +263,7 @@ class TestConnectRoutingUnit:
             listen_host="127.0.0.1",
             listen_port=0,
             scope_matcher=ScopeMatcher(),
-            capture_all=True,
+            target_all=True,
             max_connections=10,
             connect_remote=_unused_connector,
             on_in_scope=on_in_scope,
@@ -257,7 +287,7 @@ class TestConnectRoutingUnit:
 
         assert calls == [("no-sni-target.example", 443, client_hello)]
 
-    async def test_no_sni_without_capture_all_is_out_of_scope(self) -> None:
+    async def test_no_sni_without_target_all_is_out_of_scope(self) -> None:
         connector_calls: list[tuple[str, int]] = []
 
         async def fake_connect(
@@ -270,7 +300,7 @@ class TestConnectRoutingUnit:
             listen_host="127.0.0.1",
             listen_port=0,
             scope_matcher=ScopeMatcher(targets=["irrelevant.example"]),
-            capture_all=False,
+            target_all=False,
             max_connections=10,
             connect_remote=fake_connect,
             on_in_scope=_unused_handler,
@@ -299,7 +329,7 @@ class TestConnectRoutingUnit:
             listen_host="127.0.0.1",
             listen_port=0,
             scope_matcher=ScopeMatcher(targets=["irrelevant.example"]),
-            capture_all=False,
+            target_all=False,
             max_connections=10,
             connect_remote=_unused_connector,
             on_in_scope=_unused_handler,
@@ -331,7 +361,7 @@ class TestConnectRoutingUnit:
             listen_host="127.0.0.1",
             listen_port=0,
             scope_matcher=ScopeMatcher(),
-            capture_all=False,
+            target_all=False,
             max_connections=10,
             connect_remote=_unused_connector,
             on_in_scope=_unused_handler,
@@ -375,7 +405,7 @@ class TestUnhandledExceptionSurvival:
             listen_host="127.0.0.1",
             listen_port=0,
             scope_matcher=ScopeMatcher(targets=["sni-test.example"]),
-            capture_all=False,
+            target_all=False,
             max_connections=10,
             connect_remote=_unused_connector,
             on_in_scope=exploding_handler,
@@ -415,7 +445,7 @@ class TestClientHelloReadTimeout:
             listen_host="127.0.0.1",
             listen_port=0,
             scope_matcher=ScopeMatcher(),
-            capture_all=False,
+            target_all=False,
             max_connections=10,
             connect_remote=_unused_connector,
             on_in_scope=_unused_handler,
@@ -453,7 +483,7 @@ class TestFirstSightScopeLogging:
             listen_host="127.0.0.1",
             listen_port=0,
             scope_matcher=ScopeMatcher(targets=["sni-test.example"]),
-            capture_all=False,
+            target_all=False,
             max_connections=10,
             connect_remote=_unused_connector,
             on_in_scope=on_in_scope,
@@ -484,7 +514,7 @@ class TestMaxConnections:
             listen_host="127.0.0.1",
             listen_port=0,
             scope_matcher=ScopeMatcher(),
-            capture_all=False,
+            target_all=False,
             max_connections=1,
             connect_remote=_unused_connector,
             on_in_scope=_unused_handler,
@@ -571,7 +601,7 @@ class TestEndToEndOutOfScopeBlindRelayWithRealCurl:
             listen_host="127.0.0.1",
             listen_port=0,
             scope_matcher=ScopeMatcher(targets=["some-other-domain.example"]),
-            capture_all=False,
+            target_all=False,
             max_connections=10,
             connect_remote=direct_connect,
             on_in_scope=on_in_scope,

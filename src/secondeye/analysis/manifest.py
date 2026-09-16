@@ -207,7 +207,7 @@ def build_manifest(
     ended_at: datetime.datetime,
     targets: list[str],
     target_regex: list[str] | None,
-    capture_all: bool,
+    target_all: bool,
     upstream: str | None,
     no_upstream: bool,
     classified: list[ClassifiedEntry],
@@ -221,7 +221,7 @@ def build_manifest(
         ended_at: When the capture ended.
         targets: Configured --target values.
         target_regex: Configured --target-regex values, if any.
-        capture_all: Whether --capture-all was set.
+        target_all: Whether --target-all was set.
         upstream: "host:port" of the configured upstream, if not no_upstream.
         no_upstream: Whether --no-upstream was set.
         classified: All of the capture's entries, classified.
@@ -242,7 +242,7 @@ def build_manifest(
         "scope": {
             "targets": targets,
             "target_regex": target_regex,
-            "capture_all": capture_all,
+            "target_all": target_all,
             "upstream": upstream,
             "no_upstream": no_upstream,
         },

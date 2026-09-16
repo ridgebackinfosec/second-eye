@@ -65,7 +65,7 @@ class TestConfigValidationBeforeBinding:
                     listen_port=0,
                     targets=[],
                     target_regex=[],
-                    capture_all=False,
+                    target_all=False,
                     no_upstream=True,
                     state_dir=tmp_path,
                 )
@@ -82,13 +82,13 @@ class TestConfigValidationBeforeBinding:
             )
         )
 
-    def test_capture_all_alone_satisfies_the_requirement(self, tmp_path: Path) -> None:
+    def test_target_all_alone_satisfies_the_requirement(self, tmp_path: Path) -> None:
         Daemon(
             DaemonConfig(
                 listen_port=0,
                 targets=[],
                 target_regex=[],
-                capture_all=True,
+                target_all=True,
                 no_upstream=True,
                 state_dir=tmp_path,
             )
@@ -165,6 +165,23 @@ class TestStartupAndControlSocket:
         assert response["ok"] is True
         await asyncio.wait_for(daemon.wait_for_shutdown(), timeout=5)
         await daemon.shutdown()
+
+
+class TestSecondInstanceGuard:
+    async def test_second_daemon_on_same_state_dir_raises_and_first_stays_up(
+        self, tmp_path: Path
+    ) -> None:
+        first = _daemon(tmp_path)
+        await first.start()
+        try:
+            second = _daemon(tmp_path)
+            with pytest.raises(ConfigError):
+                await second.start()
+
+            response = await send_request(tmp_path / "control.sock", "proxy.status")
+            assert response["ok"] is True
+        finally:
+            await first.shutdown()
 
 
 class TestShutdownFlushesActiveCapture:

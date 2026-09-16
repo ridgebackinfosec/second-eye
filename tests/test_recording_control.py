@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from secondeye.exceptions import ConfigError
 from secondeye.recording.control import (
     ControlServer,
     ControlSocketUnavailableError,
@@ -19,7 +20,7 @@ def _manager(tmp_path: Path) -> CaptureManager:
         target_label="example-com",
         targets=["example.com"],
         target_regex=None,
-        capture_all=False,
+        target_all=False,
         upstream="127.0.0.1:8080",
         no_upstream=False,
     )
@@ -123,6 +124,50 @@ class TestCaptureLifecycleOverSocket:
             assert "output_dir" in error
         finally:
             await server.stop()
+
+
+class TestSecondInstanceGuard:
+    async def test_second_server_on_live_socket_raises_config_error(self, tmp_path: Path) -> None:
+        socket_path = tmp_path / "control.sock"
+        first = ControlServer(
+            socket_path=socket_path, handlers=build_capture_handlers(_manager(tmp_path))
+        )
+        await first.start()
+        try:
+            second = ControlServer(
+                socket_path=socket_path, handlers=build_capture_handlers(_manager(tmp_path))
+            )
+            with pytest.raises(ConfigError):
+                await second.start()
+
+            # The first server must be untouched and still fully functional.
+            response = await send_request(socket_path, "capture.list")
+            assert response["ok"] is True
+        finally:
+            await first.stop()
+
+    async def test_stale_socket_file_does_not_block_a_fresh_start(self, tmp_path: Path) -> None:
+        socket_path = tmp_path / "control.sock"
+        stale = ControlServer(
+            socket_path=socket_path, handlers=build_capture_handlers(_manager(tmp_path))
+        )
+        await stale.start()
+        # Simulate an unclean shutdown: the listening socket goes away but
+        # the socket file is left behind on disk (stale.stop() is never
+        # called, so it never unlinks it).
+        assert stale._server is not None
+        stale._server.close()
+        await stale._server.wait_closed()
+
+        fresh = ControlServer(
+            socket_path=socket_path, handlers=build_capture_handlers(_manager(tmp_path))
+        )
+        await fresh.start()
+        try:
+            response = await send_request(socket_path, "capture.list")
+            assert response["ok"] is True
+        finally:
+            await fresh.stop()
 
 
 class TestHandlerMerging:

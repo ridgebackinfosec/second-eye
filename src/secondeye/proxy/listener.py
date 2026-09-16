@@ -49,7 +49,7 @@ def ensure_loopback(host: str) -> None:
     """Raise ConfigError unless host is a loopback IP literal (SPEC.md §4.7).
 
     Args:
-        host: The configured --listen host.
+        host: The configured --listen-address host.
 
     Raises:
         ConfigError: If host is not a valid loopback IP literal. No override
@@ -60,16 +60,16 @@ def ensure_loopback(host: str) -> None:
         addr = ipaddress.ip_address(host)
     except ValueError as exc:
         raise ConfigError(
-            f"--listen host {host!r} must be a loopback IP literal (127.0.0.1 or ::1)"
+            f"--listen-address host {host!r} must be a loopback IP literal (127.0.0.1 or ::1)"
         ) from exc
     if not addr.is_loopback:
-        raise ConfigError(f"--listen host {host!r} is not loopback (127.0.0.1 or ::1)")
+        raise ConfigError(f"--listen-address host {host!r} is not loopback (127.0.0.1 or ::1)")
 
 
 class ProxyListener:
     """Accepts CONNECT tunnels, peeks SNI, and routes by scope (SPEC.md §4.1).
 
-    In-scope connections (matched target/regex, or --capture-all) are
+    In-scope connections (matched target/regex, or --target-all) are
     handed to an injected handler. Out-of-scope connections are blindly
     relayed via proxy/splice.py with zero TLS/cert operations.
     """
@@ -80,7 +80,7 @@ class ProxyListener:
         listen_host: str,
         listen_port: int,
         scope_matcher: ScopeMatcher,
-        capture_all: bool,
+        target_all: bool,
         max_connections: int,
         connect_remote: RemoteConnector,
         on_in_scope: InScopeHandler,
@@ -92,14 +92,14 @@ class ProxyListener:
             listen_host: Bind host; must be loopback (SPEC.md §4.7).
             listen_port: Bind port (0 for an OS-assigned ephemeral port).
             scope_matcher: Compiled --target/--target-regex scope.
-            capture_all: Bypass scope matching entirely (SPEC.md §3.4).
+            target_all: Bypass scope matching entirely (SPEC.md §3.4).
             max_connections: Hard cap on concurrent connections (SPEC.md §4.8).
             connect_remote: Async callable establishing an outbound
                 connection for the out-of-scope blind-relay path.
             on_in_scope: Async callable invoked for in-scope CONNECT
                 connections, given the client stream pair, the SNI (or
                 CONNECT target host if no SNI was presented and
-                --capture-all is set), the destination port, and the
+                --target-all is set), the destination port, and the
                 buffered ClientHello bytes.
             on_plain_http: Async callable invoked for non-CONNECT
                 (absolute-URI) requests, given the client stream pair and
@@ -113,7 +113,7 @@ class ProxyListener:
         self._listen_host = listen_host
         self._listen_port = listen_port
         self._scope_matcher = scope_matcher
-        self._capture_all = capture_all
+        self._target_all = target_all
         self._max_connections = max_connections
         self._connect_remote = connect_remote
         self._on_in_scope = on_in_scope
@@ -139,10 +139,20 @@ class ProxyListener:
         return int(self._server.sockets[0].getsockname()[1])
 
     async def start(self) -> None:
-        """Bind the listener and begin accepting connections."""
-        self._server = await asyncio.start_server(
-            self._handle_connection, self._listen_host, self._listen_port
-        )
+        """Bind the listener and begin accepting connections.
+
+        Raises:
+            ConfigError: If the host:port is already in use.
+        """
+        try:
+            self._server = await asyncio.start_server(
+                self._handle_connection, self._listen_host, self._listen_port
+            )
+        except OSError as exc:
+            raise ConfigError(
+                f"failed to bind {self._listen_host}:{self._listen_port}: {exc}. "
+                "Another process may already be using this address."
+            ) from exc
 
     async def stop(self) -> None:
         """Stop accepting new connections and wait for the listener to close."""
@@ -229,7 +239,7 @@ class ProxyListener:
 
         sni = result.sni
         prebuffered = bytes(buffer)
-        in_scope = self._capture_all or (sni is not None and self._scope_matcher.match(sni).matched)
+        in_scope = self._target_all or (sni is not None and self._scope_matcher.match(sni).matched)
 
         logger.debug(
             "CONNECT %s:%d from %s: sni=%s in_scope=%s", host, port, peername, sni, in_scope

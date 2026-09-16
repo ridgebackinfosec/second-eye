@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 _HAR_VERSION = "1.2"
 _CREATOR_NAME = "secondeye"
-_CREATOR_VERSION = "0.1.2"
+_CREATOR_VERSION = "0.2.0"
 _BUFFER_FILENAME = ".buffer.jsonl"
 
 
@@ -92,7 +92,7 @@ class CaptureManager:
         target_label: str,
         targets: list[str],
         target_regex: list[str] | None,
-        capture_all: bool,
+        target_all: bool,
         upstream: str | None,
         no_upstream: bool,
         cluster_window_ms: int = 2000,
@@ -106,7 +106,7 @@ class CaptureManager:
                 e.g. "example-com"); derived by the caller (daemon.py).
             targets: Configured --target values, for manifest.json's scope.
             target_regex: Configured --target-regex values, if any.
-            capture_all: Whether --capture-all was set.
+            target_all: Whether --target-all was set.
             upstream: "host:port" of the configured upstream, if any.
             no_upstream: Whether --no-upstream was set.
             cluster_window_ms: Flow-clustering time window (SPEC.md
@@ -117,7 +117,7 @@ class CaptureManager:
         self._target_label = target_label
         self._targets = targets
         self._target_regex = target_regex
-        self._capture_all = capture_all
+        self._target_all = target_all
         self._upstream = upstream
         self._no_upstream = no_upstream
         self._cluster_window_ms = cluster_window_ms
@@ -134,13 +134,13 @@ class CaptureManager:
         """This run's fixed scope configuration, for status/confirmation output.
 
         Returns:
-            {"targets": [...], "target_regex": [...] | None, "capture_all":
+            {"targets": [...], "target_regex": [...] | None, "target_all":
             bool, "upstream": str | None, "no_upstream": bool}.
         """
         return {
             "targets": self._targets,
             "target_regex": self._target_regex,
-            "capture_all": self._capture_all,
+            "target_all": self._target_all,
             "upstream": self._upstream,
             "no_upstream": self._no_upstream,
         }
@@ -214,7 +214,7 @@ class CaptureManager:
             ended_at=ended_at,
             targets=self._targets,
             target_regex=self._target_regex,
-            capture_all=self._capture_all,
+            target_all=self._target_all,
             upstream=self._upstream,
             no_upstream=self._no_upstream,
             classified=classified,

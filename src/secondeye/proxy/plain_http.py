@@ -63,7 +63,7 @@ class PlainHttpHandler:
         self,
         *,
         scope_matcher: ScopeMatcher,
-        capture_all: bool,
+        target_all: bool,
         upstream_connector: UpstreamConnector,
         on_entry_recorded: RecordCallback,
     ) -> None:
@@ -71,7 +71,7 @@ class PlainHttpHandler:
 
         Args:
             scope_matcher: Compiled --target/--target-regex scope.
-            capture_all: Bypass scope matching entirely (SPEC.md §3.4).
+            target_all: Bypass scope matching entirely (SPEC.md §3.4).
             upstream_connector: Establishes the outbound leg per request.
             on_entry_recorded: Invoked with each completed in-scope
                 HarEntry. The real implementation (recording/manager.py)
@@ -79,7 +79,7 @@ class PlainHttpHandler:
                 callback shape.
         """
         self._scope_matcher = scope_matcher
-        self._capture_all = capture_all
+        self._target_all = target_all
         self._upstream_connector = upstream_connector
         self._on_entry_recorded = on_entry_recorded
 
@@ -128,7 +128,7 @@ class PlainHttpHandler:
                 return
             host, port, path = parsed
 
-            in_scope = self._capture_all or self._scope_matcher.match(host).matched
+            in_scope = self._target_all or self._scope_matcher.match(host).matched
 
             started_at = datetime.datetime.now(datetime.UTC)
             start_perf = time.monotonic()

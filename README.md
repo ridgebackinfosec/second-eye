@@ -81,7 +81,7 @@ If you're chaining `secondeye` through an intercepting proxy for manual testing,
 you also need `secondeye`'s connection *to that proxy* to trust its CA:
 
 ```sh
-secondeye ca import-upstream --from-burp --upstream 127.0.0.1:8080 --output burp-ca.pem
+secondeye ca import-upstream --from-burp --upstream-proxy 127.0.0.1:8080 --output burp-ca.pem
 ```
 
 This fetches Burp's CA from its well-known `/cert` export endpoint and converts it
@@ -208,14 +208,14 @@ secondeye capture list                    # captures completed so far this run
 ```
 
 Run `secondeye <noun> <verb> --help` for the full flag reference on any
-subcommand (`--listen`, `--capture-all`, `--cluster-window`, `--max-connections`,
+subcommand (`--listen-address`, `--target-all`, `--cluster-window`, `--max-connections`,
 `-v`/`-q`, etc.).
 
 ### A note on OAuth/OIDC and other third-party redirects
 
 If the flow you're testing hops out to a third-party identity provider
 (`accounts.google.com`, Okta, Auth0, Azure AD, ...), `--target`/`--target-regex`
-were never meant to enumerate those. Use `--capture-all` to bypass scope matching
+were never meant to enumerate those. Use `--target-all` to bypass scope matching
 entirely for the life of the daemon — every domain gets terminated and inspected,
 but (per the no-active-capture invariant below) nothing is written to disk unless
 a capture is actively running.

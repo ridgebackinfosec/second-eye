@@ -76,7 +76,7 @@ class TestInScopeRequestRecordedAndForwardedDirect:
 
         handler = PlainHttpHandler(
             scope_matcher=ScopeMatcher(targets=["target.example"]),
-            capture_all=False,
+            target_all=False,
             upstream_connector=connector,
             on_entry_recorded=on_entry_recorded,
         )
@@ -133,7 +133,7 @@ class TestOutOfScopeNotRecordedButStillForwarded:
 
         handler = PlainHttpHandler(
             scope_matcher=ScopeMatcher(targets=["some-other-domain.example"]),
-            capture_all=False,
+            target_all=False,
             upstream_connector=connector,
             on_entry_recorded=on_entry_recorded,
         )
@@ -164,8 +164,8 @@ class TestOutOfScopeNotRecordedButStillForwarded:
         assert recorded == []  # but never recorded
 
 
-class TestCaptureAllRecordsRegardlessOfScope:
-    async def test_capture_all_records_even_without_matching_target(self) -> None:
+class TestTargetAllRecordsRegardlessOfScope:
+    async def test_target_all_records_even_without_matching_target(self) -> None:
         dest_server, dest_port, received = await _start_plaintext_http_destination()
         connector = UpstreamConnector(upstream_host=None, upstream_port=None, no_upstream=True)
 
@@ -183,7 +183,7 @@ class TestCaptureAllRecordsRegardlessOfScope:
 
         handler = PlainHttpHandler(
             scope_matcher=ScopeMatcher(),
-            capture_all=True,
+            target_all=True,
             upstream_connector=connector,
             on_entry_recorded=on_entry_recorded,
         )
@@ -231,7 +231,7 @@ class TestKeepAliveAcrossDifferentHosts:
 
         handler = PlainHttpHandler(
             scope_matcher=ScopeMatcher(targets=["in-scope.example"]),
-            capture_all=False,
+            target_all=False,
             upstream_connector=connector,
             on_entry_recorded=on_entry_recorded,
         )
@@ -278,7 +278,7 @@ class TestMalformedTarget:
 
         handler = PlainHttpHandler(
             scope_matcher=ScopeMatcher(),
-            capture_all=True,
+            target_all=True,
             upstream_connector=connector,
             on_entry_recorded=on_entry_recorded,
         )
@@ -306,7 +306,7 @@ class TestUpstreamUnreachable:
 
         handler = PlainHttpHandler(
             scope_matcher=ScopeMatcher(),
-            capture_all=True,
+            target_all=True,
             upstream_connector=connector,
             on_entry_recorded=on_entry_recorded,
         )
@@ -354,7 +354,7 @@ class TestUpstreamModePreservesAbsoluteUriTarget:
 
         handler = PlainHttpHandler(
             scope_matcher=ScopeMatcher(),
-            capture_all=True,
+            target_all=True,
             upstream_connector=connector,
             on_entry_recorded=on_entry_recorded,
         )

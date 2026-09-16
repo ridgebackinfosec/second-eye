@@ -125,7 +125,7 @@ def _spawn_daemon_subprocess(
             "proxy",
             "start",
             "--no-upstream",
-            "--listen",
+            "--listen-address",
             f"127.0.0.1:{_free_port()}",
             *extra_args,
         ],
@@ -308,7 +308,7 @@ def running_daemon(_isolated_home: Path) -> object:
             "--target",
             "example.com",
             "--no-upstream",
-            "--listen",
+            "--listen-address",
             f"127.0.0.1:{_free_port()}",
         ],
         env=env,
@@ -458,7 +458,7 @@ class TestCaImportUpstream:
                     "ca",
                     "import-upstream",
                     "--from-burp",
-                    "--upstream",
+                    "--upstream-proxy",
                     f"127.0.0.1:{server_port}",
                     "--output",
                     str(output_path),
@@ -478,7 +478,7 @@ class TestCaImportUpstream:
                 "ca",
                 "import-upstream",
                 "--from-burp",
-                "--upstream",
+                "--upstream-proxy",
                 "127.0.0.1:1",  # nothing listens on port 1
             ]
         )
@@ -502,7 +502,7 @@ class TestEndToEndSubprocessDaemon:
         # cert for a fake "upstream.example" domain would never validate,
         # and a real system-CA-trusted cert isn't something a repeatable
         # offline test can produce. So this test instead drives the
-        # --upstream/--upstream-insecure path: the "destination" below
+        # --upstream-proxy/--upstream-insecure path: the "destination" below
         # speaks the CONNECT protocol and upgrades to TLS server-side with
         # a self-signed cert, exactly like a real intercepting proxy (Burp)
         # would — --upstream-insecure is the explicitly-supported way to
@@ -570,10 +570,10 @@ class TestEndToEndSubprocessDaemon:
                 "start",
                 "--target",
                 "localhost",
-                "--upstream",
+                "--upstream-proxy",
                 f"127.0.0.1:{upstream_port}",
                 "--upstream-insecure",
-                "--listen",
+                "--listen-address",
                 f"127.0.0.1:{proxy_port}",
             ],
             env=env,

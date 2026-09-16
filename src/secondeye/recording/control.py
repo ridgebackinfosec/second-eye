@@ -23,6 +23,7 @@ from secondeye.exceptions import (
     CaptureAlreadyActiveError,
     CaptureControlError,
     CaptureNameConflictError,
+    ConfigError,
     SecondEyeError,
 )
 from secondeye.recording.manager import ActiveCapture, CaptureManager, CaptureResult
@@ -63,9 +64,22 @@ class ControlServer:
         self._server: asyncio.Server | None = None
 
     async def start(self) -> None:
-        """Bind the control socket and begin accepting clients."""
+        """Bind the control socket and begin accepting clients.
+
+        Raises:
+            ConfigError: If another daemon is already listening on this
+                socket path (see ``_is_socket_live``). A stale socket file
+                left behind by an unclean shutdown, with nothing listening
+                behind it, is unlinked and reused as before.
+        """
         self._socket_path.parent.mkdir(parents=True, exist_ok=True)
         if self._socket_path.exists():
+            if await _is_socket_live(self._socket_path):
+                raise ConfigError(
+                    f"another secondeye daemon is already running "
+                    f"(control socket {self._socket_path} is in use). "
+                    "Run 'secondeye proxy stop' first."
+                )
             self._socket_path.unlink()
         self._server = await asyncio.start_unix_server(
             self._handle_client, path=str(self._socket_path)
@@ -133,6 +147,24 @@ class ControlServer:
             return await handler(params)
         except CaptureControlError as exc:
             return {"ok": False, "error": _error_to_dict(exc)}
+
+
+async def _is_socket_live(socket_path: Path) -> bool:
+    """Whether something is actively listening on an existing socket path.
+
+    A stale socket file left behind by an unclean shutdown refuses the
+    connection immediately (ECONNREFUSED); a live daemon accepts it.
+    """
+    try:
+        _reader, writer = await asyncio.open_unix_connection(path=str(socket_path))
+    except OSError:
+        return False
+    writer.close()
+    try:
+        await writer.wait_closed()
+    except OSError:
+        pass
+    return True
 
 
 async def send_request(

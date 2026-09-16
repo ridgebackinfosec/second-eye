@@ -6,7 +6,7 @@ handlers, capture recording, and the control socket. ``Daemon.run()`` is
 what ``secondeye proxy start`` (cli.py, this same phase) blocks on in the
 foreground all day, per SPEC.md §1's operator workflow.
 
-All daemon-startup validation (loopback --listen, upstream trust flags)
+All daemon-startup validation (loopback --listen-address, upstream trust flags)
 happens as a side effect of constructing the pieces below — ProxyListener
 validates loopback in its own __init__ (SPEC.md §4.7) and UpstreamConnector
 validates trust config in its own __init__ (SPEC.md §2) — so Daemon.__init__
@@ -56,7 +56,7 @@ class DaemonConfig:
         no_upstream: Whether --no-upstream was set.
         upstream_ca: Path to the upstream's CA cert (PEM), if provided.
         upstream_insecure: Whether --upstream-insecure was set.
-        capture_all: Whether --capture-all was set.
+        target_all: Whether --target-all was set.
         cluster_window_ms: --cluster-window value.
         max_connections: --max-connections value.
         state_dir: secondeye's state directory.
@@ -71,7 +71,7 @@ class DaemonConfig:
     no_upstream: bool = False
     upstream_ca: Path | None = None
     upstream_insecure: bool = False
-    capture_all: bool = False
+    target_all: bool = False
     cluster_window_ms: int = 2000
     max_connections: int = 256
     state_dir: Path = field(default_factory=default_state_dir)
@@ -87,22 +87,23 @@ class Daemon:
             config: Fully-resolved daemon configuration.
 
         Raises:
-            ConfigError: If --listen isn't loopback, upstream trust flags
-                are invalid (SPEC.md §2, raised by the relevant component's
-                own __init__, not duplicated here), or no scope was
-                configured at all (SPEC.md §2 marks --target "required (at
-                least one)"; --target-regex or --capture-all alone also
-                satisfy this, since both are legitimate alternative scope
-                mechanisms per SPEC.md §3.3/§3.4).
+            ConfigError: If --listen-address isn't loopback, upstream trust
+                flags are invalid (SPEC.md §2, raised by the relevant
+                component's own __init__, not duplicated here), or no scope
+                was configured at all (SPEC.md §2 marks --target "required
+                (at least one)"; -tf/--target-file, --target-regex, or
+                --target-all alone also satisfy this, since all are
+                legitimate alternative scope mechanisms per SPEC.md
+                §3.3/§3.4/§3.7).
             ScopeConfigError: If a --target-regex pattern doesn't compile.
         """
         self._config = config
         self._shutdown_event = asyncio.Event()
 
-        if not config.targets and not config.target_regex and not config.capture_all:
+        if not config.targets and not config.target_regex and not config.target_all:
             raise ConfigError(
                 "at least one --target or --target-regex is required "
-                "(or pass --capture-all to bypass scope matching entirely)"
+                "(or pass --target-all to bypass scope matching entirely)"
             )
 
         if config.upstream_insecure:
@@ -127,11 +128,11 @@ class Daemon:
         self._capture_manager = CaptureManager(
             state_dir=config.state_dir,
             target_label=_derive_target_label(
-                config.targets, config.target_regex, config.capture_all
+                config.targets, config.target_regex, config.target_all
             ),
             targets=config.targets,
             target_regex=config.target_regex or None,
-            capture_all=config.capture_all,
+            target_all=config.target_all,
             upstream=_upstream_label(config),
             no_upstream=config.no_upstream,
             cluster_window_ms=config.cluster_window_ms,
@@ -144,7 +145,7 @@ class Daemon:
         )
         self._plain_http_handler = PlainHttpHandler(
             scope_matcher=self._scope_matcher,
-            capture_all=config.capture_all,
+            target_all=config.target_all,
             upstream_connector=self._upstream_connector,
             on_entry_recorded=self._capture_manager.record_entry,
         )
@@ -153,7 +154,7 @@ class Daemon:
             listen_host=config.listen_host,
             listen_port=config.listen_port,
             scope_matcher=self._scope_matcher,
-            capture_all=config.capture_all,
+            target_all=config.target_all,
             max_connections=config.max_connections,
             connect_remote=self._upstream_connector.connect_raw,
             on_in_scope=self._intercept_handler,
@@ -169,7 +170,7 @@ class Daemon:
 
     @property
     def listener_bound_port(self) -> int:
-        """The proxy listener's actual bound port (useful with an ephemeral --listen port)."""
+        """The proxy listener's actual bound port (useful with an ephemeral --listen-address)."""
         return self._listener.bound_port
 
     async def _handle_status(self, _params: dict[str, object]) -> dict[str, object]:
@@ -192,9 +193,16 @@ class Daemon:
         return {"ok": True, "result": {"stopping": True}}
 
     async def start(self) -> None:
-        """Bind the proxy listener and control socket (does not block)."""
-        await self._listener.start()
+        """Bind the control socket and proxy listener (does not block).
+
+        The control socket is checked/bound first so that a second
+        ``proxy start`` against the same state dir gets the specific
+        "another secondeye daemon is already running" message instead of a
+        generic port-in-use error from the listener (the common case: both
+        instances use the same default --listen-address).
+        """
         await self._control_server.start()
+        await self._listener.start()
         logger.info(
             "secondeye listening on %s:%d", self._config.listen_host, self.listener_bound_port
         )
@@ -243,13 +251,13 @@ class Daemon:
             await self.shutdown()
 
 
-def _derive_target_label(targets: list[str], target_regex: list[str], capture_all: bool) -> str:
+def _derive_target_label(targets: list[str], target_regex: list[str], target_all: bool) -> str:
     if targets:
         return re.sub(r"[^a-zA-Z0-9-]", "-", targets[0])
     if target_regex:
         return "target-regex"
-    if capture_all:
-        return "capture-all"
+    if target_all:
+        return "target-all"
     return "scope"
 
 

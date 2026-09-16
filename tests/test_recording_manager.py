@@ -44,7 +44,7 @@ def _manager(tmp_path: Path, target_label: str = "example-com") -> CaptureManage
         target_label=target_label,
         targets=["example.com"],
         target_regex=None,
-        capture_all=False,
+        target_all=False,
         upstream="127.0.0.1:8080",
         no_upstream=False,
     )
@@ -197,7 +197,7 @@ class TestScopeSummary:
         assert summary == {
             "targets": ["example.com"],
             "target_regex": None,
-            "capture_all": False,
+            "target_all": False,
             "upstream": "127.0.0.1:8080",
             "no_upstream": False,
         }

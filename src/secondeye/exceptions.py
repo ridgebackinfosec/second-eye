@@ -31,7 +31,9 @@ class ConfigError(SecondEyeError):
     """Raised for invalid daemon-startup configuration (SPEC.md §2).
 
     Covers cases not specific to scope/cert/upstream/ClientHello handling,
-    e.g. a non-loopback --listen address or conflicting upstream flags.
+    e.g. a non-loopback --listen-address, conflicting upstream flags, a
+    --listen-address/control-socket already in use by another process, or
+    another secondeye daemon already running against the same state dir.
     """
 
 

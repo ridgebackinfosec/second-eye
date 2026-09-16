@@ -3,7 +3,7 @@
 
 Two routing modes, fixed for the daemon's lifetime:
   - Upstream (Burp/ZAP): every outbound connection first tunnels through
-    the configured --upstream host:port via an HTTP CONNECT handshake.
+    the configured --upstream-proxy host:port via an HTTP CONNECT handshake.
   - Direct (--no-upstream): every outbound connection goes straight to the
     real destination, with full system trust store validation on the
     resulting TLS leg — no override flag exists for this leg (SPEC.md §5.1).
@@ -57,7 +57,7 @@ def validate_upstream_config(
 
 
 class UpstreamConnector:
-    """Establishes outbound connections honoring --upstream/--no-upstream routing."""
+    """Establishes outbound connections honoring --upstream-proxy/--no-upstream routing."""
 
     def __init__(
         self,

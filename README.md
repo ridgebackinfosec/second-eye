@@ -27,6 +27,9 @@ but is untested/unsupported, and there is no Windows support planned.
 
 ---
 
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for diagrams of the operator
+workflow and the per-connection scope decision.
+
 ## Install
 
 ```sh
@@ -224,7 +227,8 @@ by `secondeye`'s own CA, parsed as HTTP/1.1, and — if a capture is currently
 active — recorded. This is a deliberate contrast to blanket-MITM tools: your
 client only needs to trust `secondeye`'s CA for the domains you actually scoped
 in, cert-pinned out-of-scope apps aren't broken unnecessarily, and no crypto work
-is spent decrypting traffic that's immediately discarded.
+is spent decrypting traffic that's immediately discarded. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a diagram of this decision.
 
 Recording is capture-gated, not scope-gated: in-scope traffic flows normally
 whether or not a capture is active, but nothing is buffered or written to disk

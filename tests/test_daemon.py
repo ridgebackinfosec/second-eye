@@ -201,6 +201,19 @@ class TestShutdownFlushesActiveCapture:
         assert (output_dir / "ANALYSIS.md").exists()
 
 
+class TestOnStartedHook:
+    async def test_on_started_fires_once_after_bind_succeeds(self, tmp_path: Path) -> None:
+        calls: list[None] = []
+        daemon = _daemon(tmp_path)
+        run_task = asyncio.create_task(daemon.run(on_started=lambda: calls.append(None)))
+        try:
+            await _wait_until_started(daemon)
+            assert calls == [None]
+        finally:
+            daemon.request_shutdown()
+            await asyncio.wait_for(run_task, timeout=5)
+
+
 class TestSignalHandling:
     async def test_sigint_sets_shutdown_event(self, tmp_path: Path) -> None:
         daemon = _daemon(tmp_path)

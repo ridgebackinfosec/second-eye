@@ -28,7 +28,12 @@ to repeating `--target`. Second-instance guard, three CLI flag renames
 (`--listen`→`--listen-address`, `--upstream`→`--upstream-proxy`,
 `--capture-all`→`--target-all`, the latter renamed all the way through
 internal code and `manifest.json`'s schema key), and full `--help` text on
-every flag (v0.2.0).
+every flag (v0.2.0). CLI UX pass (v0.3.0): a `proxy start` startup banner
+(scope/listen/upstream summary + next-step hint, printed unconditionally via
+`Daemon.run()`'s new `on_started` callback, unaffected by `-v`/`-q`);
+colorized `✓`/`✗` output (`_green`/`_red` in `cli.py`, respecting `NO_COLOR`
+and non-tty streams); and `argcomplete`-based shell completion (the
+project's first non-load-bearing dependency).
 
 ## Commands
 

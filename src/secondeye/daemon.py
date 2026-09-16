@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import signal
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -241,9 +242,19 @@ class Daemon:
         logger.info("shutdown signal received")
         self._shutdown_event.set()
 
-    async def run(self) -> None:
-        """The full foreground lifecycle: bind, install signal handlers, wait, shut down."""
+    async def run(self, *, on_started: Callable[[], None] | None = None) -> None:
+        """The full foreground lifecycle: bind, install signal handlers, wait, shut down.
+
+        Args:
+            on_started: Optional callback invoked once, synchronously, right
+                after a successful bind (both the control socket and the
+                proxy listener) and before signal handlers are installed.
+                Lets a caller (cli.py) print a startup banner without
+                daemon.py knowing anything about console presentation.
+        """
         await self.start()
+        if on_started is not None:
+            on_started()
         self.install_signal_handlers()
         try:
             await self.wait_for_shutdown()

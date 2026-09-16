@@ -8,14 +8,19 @@ SPEC.md §1's workflow calls ``ca export`` before ``proxy start`` even
 exists, so it can't depend on a running daemon).
 """
 
+# PYTHON_ARGCOMPLETE_OK
+
 from __future__ import annotations
 
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
+from typing import TextIO
 
+import argcomplete
 import h11
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
@@ -43,11 +48,12 @@ def main(argv: list[str] | None = None) -> int:
         The process exit code.
     """
     parser = _build_parser()
+    argcomplete.autocomplete(parser)
     args = parser.parse_args(argv)
     try:
         return int(args.handler(args))
     except SecondEyeError as exc:
-        print(f"✗ {exc}", file=sys.stderr)
+        print(f"{_red('✗')} {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         return 130
@@ -270,20 +276,39 @@ def _cmd_proxy_start(args: argparse.Namespace) -> int:
         state_dir=default_state_dir(),
     )
     daemon = Daemon(config)
-    asyncio.run(daemon.run())
+    scope = {"targets": targets, "target_regex": args.target_regex, "target_all": args.target_all}
+    asyncio.run(daemon.run(on_started=lambda: _print_startup_banner(daemon, config, scope)))
     return 0
+
+
+def _print_startup_banner(daemon: Daemon, config: DaemonConfig, scope: dict[str, object]) -> None:
+    upstream = (
+        "none (--no-upstream)"
+        if config.no_upstream
+        else f"{config.upstream_host}:{config.upstream_port}"
+    )
+    print(f"{_green('✓')} secondeye started")
+    print(f"  Listening:  {config.listen_host}:{daemon.listener_bound_port}")
+    print(f"  Scope:      {_format_scope(scope)}")
+    print(f"  Upstream:   {upstream}")
+    print()
+    print(
+        "Point your client's proxy settings here. Run 'secondeye capture start "
+        "--name <label>' when ready to record."
+    )
+    sys.stdout.flush()
 
 
 def _cmd_proxy_stop(_args: argparse.Namespace) -> int:
     try:
         response = asyncio.run(send_request(_control_socket_path(), "proxy.stop"))
     except ControlSocketUnavailableError:
-        print("✗ No running secondeye daemon found.", file=sys.stderr)
+        print(f"{_red('✗')} No running secondeye daemon found.", file=sys.stderr)
         return 1
     if not response.get("ok"):
-        print(f"✗ {_error_message(response)}", file=sys.stderr)
+        print(f"{_red('✗')} {_error_message(response)}", file=sys.stderr)
         return 1
-    print("✓ secondeye daemon stopping.")
+    print(f"{_green('✓')} secondeye daemon stopping.")
     return 0
 
 
@@ -291,10 +316,10 @@ def _cmd_proxy_status(_args: argparse.Namespace) -> int:
     try:
         response = asyncio.run(send_request(_control_socket_path(), "proxy.status"))
     except ControlSocketUnavailableError:
-        print("Daemon running: no")
+        print(f"Daemon running: {_red('no')}")
         return 0
     if not response.get("ok"):
-        print(f"✗ {_error_message(response)}", file=sys.stderr)
+        print(f"{_red('✗')} {_error_message(response)}", file=sys.stderr)
         return 1
 
     result = response["result"]
@@ -302,7 +327,7 @@ def _cmd_proxy_status(_args: argparse.Namespace) -> int:
     scope = result["scope"]
     assert isinstance(scope, dict)
 
-    print("Daemon running: yes")
+    print(f"Daemon running: {_green('yes')}")
     print(f"Listener:       {result['listen']}")
     print(f"Scope:          {_format_scope(scope)}")
     if scope["no_upstream"]:
@@ -331,7 +356,10 @@ def _cmd_capture_start(args: argparse.Namespace) -> int:
             send_request(_control_socket_path(), "capture.start", {"name": args.name})
         )
     except ControlSocketUnavailableError:
-        print("✗ Cannot start capture: no running secondeye daemon found.", file=sys.stderr)
+        print(
+            f"{_red('✗')} Cannot start capture: no running secondeye daemon found.",
+            file=sys.stderr,
+        )
         print("  Run 'secondeye proxy start --target <domain>' first.", file=sys.stderr)
         return 1
 
@@ -342,20 +370,20 @@ def _cmd_capture_start(args: argparse.Namespace) -> int:
         if error_type == "CaptureAlreadyActiveError":
             started_at = _format_local_time(str(error["started_at"]))
             print(
-                f"✗ Cannot start capture: a capture is already active "
+                f"{_red('✗')} Cannot start capture: a capture is already active "
                 f"({error['name']!r}, started {started_at}).",
                 file=sys.stderr,
             )
             print("  Run 'secondeye capture stop' first.", file=sys.stderr)
         elif error_type == "CaptureNameConflictError":
             print(
-                f"✗ Cannot start capture: a capture named {error['name']!r} "
+                f"{_red('✗')} Cannot start capture: a capture named {error['name']!r} "
                 "already exists for today.",
                 file=sys.stderr,
             )
             print(f"  Pick a different name or remove {error['output_dir']}.", file=sys.stderr)
         else:
-            print(f"✗ Cannot start capture: {error['message']}", file=sys.stderr)
+            print(f"{_red('✗')} Cannot start capture: {error['message']}", file=sys.stderr)
         return 1
 
     result = response["result"]
@@ -363,7 +391,7 @@ def _cmd_capture_start(args: argparse.Namespace) -> int:
     scope = result["scope"]
     assert isinstance(scope, dict)
 
-    print(f"✓ Capture started: {result['name']}")
+    print(f"{_green('✓')} Capture started: {result['name']}")
     print(f"  Started at:  {_format_utc_time(str(result['started_at']))}")
     print(f"  Output dir:  {result['output_dir']}/")
     print(f"  Scope:       {_format_scope(scope)}")
@@ -376,17 +404,23 @@ def _cmd_capture_stop(_args: argparse.Namespace) -> int:
     try:
         response = asyncio.run(send_request(_control_socket_path(), "capture.stop"))
     except ControlSocketUnavailableError:
-        print("✗ Cannot stop capture: no running secondeye daemon found.", file=sys.stderr)
+        print(
+            f"{_red('✗')} Cannot stop capture: no running secondeye daemon found.",
+            file=sys.stderr,
+        )
         return 1
 
     if not response.get("ok"):
-        print(f"✗ Cannot stop capture: {_error_message(response)}", file=sys.stderr)
+        print(f"{_red('✗')} Cannot stop capture: {_error_message(response)}", file=sys.stderr)
         return 1
 
     result = response["result"]
     assert isinstance(result, dict)
     size_str = _format_bytes(int(result["total_bytes"]))
-    print(f"✓ Capture stopped: {result['name']} ({result['request_count']} requests, {size_str})")
+    print(
+        f"{_green('✓')} Capture stopped: {result['name']} "
+        f"({result['request_count']} requests, {size_str})"
+    )
     return 0
 
 
@@ -394,11 +428,11 @@ def _cmd_capture_list(_args: argparse.Namespace) -> int:
     try:
         response = asyncio.run(send_request(_control_socket_path(), "capture.list"))
     except ControlSocketUnavailableError:
-        print("✗ No running secondeye daemon found.", file=sys.stderr)
+        print(f"{_red('✗')} No running secondeye daemon found.", file=sys.stderr)
         return 1
 
     if not response.get("ok"):
-        print(f"✗ {_error_message(response)}", file=sys.stderr)
+        print(f"{_red('✗')} {_error_message(response)}", file=sys.stderr)
         return 1
 
     captures = response["result"]
@@ -435,7 +469,7 @@ def _cmd_ca_import_upstream(args: argparse.Namespace) -> int:
     certificate = x509.load_der_x509_certificate(der_bytes)
     pem_bytes = certificate.public_bytes(serialization.Encoding.PEM)
     args.output.write_bytes(pem_bytes)
-    print(f"✓ Saved upstream CA to {args.output}")
+    print(f"{_green('✓')} Saved upstream CA to {args.output}")
     print(f"  Use with: secondeye proxy start --upstream-ca {args.output} ...")
     return 0
 
@@ -550,6 +584,22 @@ def _parse_host_port(value: str, default_port: int) -> tuple[str, int]:
     if not sep:
         return value, default_port
     return host, int(port_str)
+
+
+def _use_color(stream: TextIO) -> bool:
+    return (
+        stream.isatty() and os.environ.get("NO_COLOR") is None and os.environ.get("TERM") != "dumb"
+    )
+
+
+def _green(text: str) -> str:
+    """Color for stdout (success) messages."""
+    return f"\033[32m{text}\033[0m" if _use_color(sys.stdout) else text
+
+
+def _red(text: str) -> str:
+    """Color for stderr (error) messages — every ✗ line in this file goes to stderr."""
+    return f"\033[31m{text}\033[0m" if _use_color(sys.stderr) else text
 
 
 def _format_bytes(n: int) -> str:

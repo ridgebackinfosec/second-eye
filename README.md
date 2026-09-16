@@ -55,6 +55,23 @@ source .venv/bin/activate
 pip install -e .
 ```
 
+### Shell completion
+
+`secondeye` ships with tab-completion for bash and zsh via `argcomplete`,
+derived directly from the CLI's own flag definitions so it can't drift out of
+sync. One-time global setup (covers every `argcomplete`-enabled tool, not
+just `secondeye`):
+
+```sh
+activate-global-python-argcomplete --user
+```
+
+Or, to enable it for `secondeye` only, add this to your `.bashrc`/`.zshrc`:
+
+```sh
+eval "$(register-python-argcomplete secondeye)"
+```
+
 ---
 
 ## One-time setup: trust secondeye's CA

@@ -1,6 +1,6 @@
 [project]
 name = "second-eye"
-version = "0.2.0"
+version = "0.3.0"
 description = "Scope-gated recording proxy for offensive security engagements"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -8,6 +8,7 @@ dependencies = [
     "cryptography>=42.0,<43.0",
     "h11>=0.14,<0.15",
     "idna>=3.6,<4.0",
+    "argcomplete>=3.1,<4.0",
 ]
 
 [project.optional-dependencies]

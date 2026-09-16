@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 _HAR_VERSION = "1.2"
 _CREATOR_NAME = "secondeye"
-_CREATOR_VERSION = "0.1.1"
+_CREATOR_VERSION = "0.1.2"
 _BUFFER_FILENAME = ".buffer.jsonl"
 
 

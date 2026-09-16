@@ -113,6 +113,165 @@ class TestHostPortParsing:
         assert cli._parse_host_port("[::1]", 1234) == ("::1", 1234)
 
 
+def _spawn_daemon_subprocess(
+    home: Path, *extra_args: str, expect_start: bool = True
+) -> subprocess.Popen[str]:
+    env = {**os.environ, "HOME": str(home)}
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "secondeye.cli",
+            "proxy",
+            "start",
+            "--no-upstream",
+            "--listen",
+            f"127.0.0.1:{_free_port()}",
+            *extra_args,
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if not expect_start:
+        return proc
+    socket_path = home / ".local" / "state" / "secondeye" / "control.sock"
+    for _ in range(100):
+        if socket_path.exists():
+            break
+        assert proc.poll() is None, proc.stderr.read() if proc.stderr else ""
+        time.sleep(0.05)
+    else:
+        pytest.fail("daemon did not create control socket in time")
+    return proc
+
+
+def _stop_daemon_subprocess(proc: subprocess.Popen[str], home: Path) -> None:
+    env = {**os.environ, "HOME": str(home)}
+    subprocess.run(
+        [sys.executable, "-m", "secondeye.cli", "proxy", "stop"],
+        env=env,
+        capture_output=True,
+        timeout=10,
+    )
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+class TestTargetFile:
+    def test_target_file_merges_into_scope_alongside_target_flag(
+        self, tmp_path: Path, _isolated_home: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        target_file = tmp_path / "targets.txt"
+        target_file.write_text("file-a.example\nfile-b.example\n", encoding="utf-8")
+
+        proc = _spawn_daemon_subprocess(
+            _isolated_home, "--target", "extra.example", "-tf", str(target_file)
+        )
+        try:
+            code, out, _err = _run_cli(capsys, "proxy", "status")
+            assert code == 0
+            assert "extra.example" in out
+            assert "file-a.example" in out
+            assert "file-b.example" in out
+        finally:
+            _stop_daemon_subprocess(proc, _isolated_home)
+
+    def test_target_file_skips_comments_and_blank_lines(
+        self, tmp_path: Path, _isolated_home: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        target_file = tmp_path / "targets.txt"
+        target_file.write_text(
+            "# a comment\n\n   \nfile-only.example\n# trailing comment\n", encoding="utf-8"
+        )
+
+        proc = _spawn_daemon_subprocess(_isolated_home, "-tf", str(target_file))
+        try:
+            code, out, _err = _run_cli(capsys, "proxy", "status")
+            assert code == 0
+            assert "file-only.example" in out
+            assert "comment" not in out
+        finally:
+            _stop_daemon_subprocess(proc, _isolated_home)
+
+    def test_multiple_target_files_combine_in_order(
+        self, tmp_path: Path, _isolated_home: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        first_file = tmp_path / "first.txt"
+        first_file.write_text("first.example\n", encoding="utf-8")
+        second_file = tmp_path / "second.txt"
+        second_file.write_text("second.example\n", encoding="utf-8")
+
+        proc = _spawn_daemon_subprocess(
+            _isolated_home, "-tf", str(first_file), "-tf", str(second_file)
+        )
+        try:
+            code, out, _err = _run_cli(capsys, "proxy", "status")
+            assert code == 0
+            assert "first.example" in out
+            assert "second.example" in out
+        finally:
+            _stop_daemon_subprocess(proc, _isolated_home)
+
+    def test_target_file_alone_satisfies_scope_requirement_without_target_flag(
+        self, tmp_path: Path, _isolated_home: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        target_file = tmp_path / "targets.txt"
+        target_file.write_text("only-from-file.example\n", encoding="utf-8")
+
+        proc = _spawn_daemon_subprocess(_isolated_home, "-tf", str(target_file))
+        try:
+            code, out, _err = _run_cli(capsys, "proxy", "status")
+            assert code == 0
+            assert "Daemon running: yes" in out
+            assert "only-from-file.example" in out
+        finally:
+            _stop_daemon_subprocess(proc, _isolated_home)
+
+    def test_missing_target_file_exits_nonzero_with_clear_message(self, tmp_path: Path) -> None:
+        missing = tmp_path / "does-not-exist.txt"
+        exit_code = cli.main(
+            [
+                "proxy",
+                "start",
+                "--no-upstream",
+                "-tf",
+                str(missing),
+            ]
+        )
+        assert exit_code == 1
+
+    def test_missing_target_file_message_names_the_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        missing = tmp_path / "does-not-exist.txt"
+        cli.main(["proxy", "start", "--no-upstream", "-tf", str(missing)])
+        err = capsys.readouterr().err
+        assert str(missing) in err
+
+    def test_empty_target_file_with_no_other_scope_still_raises_config_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        empty_file = tmp_path / "empty.txt"
+        empty_file.write_text("# only comments\n\n", encoding="utf-8")
+
+        exit_code = cli.main(
+            [
+                "proxy",
+                "start",
+                "--no-upstream",
+                "-tf",
+                str(empty_file),
+            ]
+        )
+        assert exit_code == 1
+        assert "at least one" in capsys.readouterr().err
+
+
 class TestByteFormatting:
     def test_small_values_in_bytes(self) -> None:
         assert cli._format_bytes(500) == "500B"

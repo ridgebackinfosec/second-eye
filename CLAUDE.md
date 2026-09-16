@@ -19,8 +19,12 @@ All 7 build phases in `SPEC.md` §14 are complete and passing:
 `capture/har.py` + plain-HTTP path → `recording/`, `analysis/`,
 `capture/buffer.py` → `daemon.py`, `cli.py`, `README.md`.
 
-Manual testing has passed. Coverage sits around 93% (floor is 80%, enforced via
+Manual testing has passed. Coverage sits around 94% (floor is 80%, enforced via
 `pyproject.toml`'s `--cov-fail-under=80`).
+
+Post-v1 additions (also reflected in `SPEC.md`, not just here):
+`-tf`/`--target-file` (v0.1.2) — line-delimited target list, an alternative
+to repeating `--target`.
 
 ## Commands
 
@@ -126,11 +130,13 @@ touching the affected area:
   `cli.py`'s `proxy start` needs foreground orchestration + signal handling —
   exactly what §13's one-line description says the file is for. Built in
   Phase 7 alongside `cli.py`.
-- **`--target`/`--target-regex`/`--capture-all`: at least one is required.**
-  §2's CLI table marks `--target` itself as "required (at least one)," but
-  `--target-regex` or `--capture-all` alone are treated as satisfying that too
-  (both are legitimate standalone scope mechanisms per §3.3/§3.4). Enforced in
-  `Daemon.__init__`.
+- **`--target`/`-tf`/`--target-regex`/`--capture-all`: at least one is
+  required.** §2's CLI table marks `--target` itself as "required (at least
+  one)," but `-tf`/`--target-file`, `--target-regex`, or `--capture-all`
+  alone are all treated as satisfying that too (each is a legitimate
+  standalone scope mechanism per §3.3/§3.4/§3.7). `-tf` entries are merged
+  into `DaemonConfig.targets` in `cli.py` before `Daemon.__init__` runs its
+  check, so the daemon itself never distinguishes the two sources.
 - **No guard against a second `proxy start` instance.** Two daemons would race
   for the same control socket and `--listen` port. Not spec-required (only
   single-*capture* enforcement is), so left as a known gap rather than adding

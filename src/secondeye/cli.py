@@ -21,7 +21,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
 from secondeye.daemon import Daemon, DaemonConfig
-from secondeye.exceptions import SecondEyeError, UpstreamConnectionError
+from secondeye.exceptions import ConfigError, SecondEyeError, UpstreamConnectionError
 from secondeye.recording.control import ControlSocketUnavailableError, send_request
 from secondeye.tls.ca import default_state_dir, load_or_create_ca
 
@@ -62,6 +62,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     start = proxy_verbs.add_parser("start")
     start.add_argument("--target", action="append", default=[])
+    start.add_argument("-tf", "--target-file", action="append", default=[], type=Path)
     start.add_argument("--target-regex", action="append", default=[])
     start.add_argument("--listen", default=_DEFAULT_LISTEN)
     start.add_argument("--upstream", default=_DEFAULT_UPSTREAM)
@@ -119,10 +120,14 @@ def _cmd_proxy_start(args: argparse.Namespace) -> int:
     else:
         upstream_host, upstream_port = _parse_host_port(args.upstream, _DEFAULT_UPSTREAM_PORT)
 
+    targets = list(args.target)
+    for target_file in args.target_file:
+        targets.extend(_read_target_file(target_file))
+
     config = DaemonConfig(
         listen_host=listen_host,
         listen_port=listen_port,
-        targets=args.target,
+        targets=targets,
         target_regex=args.target_regex,
         upstream_host=upstream_host,
         upstream_port=upstream_port,
@@ -383,6 +388,27 @@ def _configure_logging(args: argparse.Namespace) -> None:
     logging.basicConfig(
         level=level, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s"
     )
+
+
+def _read_target_file(path: Path) -> list[str]:
+    """Parse a --target-file into a list of --target-style entries.
+
+    One target per line (same syntax --target itself accepts, per SPEC.md
+    §3.1/§3.2 — no separate matching logic needed). Blank lines and lines
+    starting with # are ignored.
+
+    Raises:
+        ConfigError: If the file can't be read.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(f"failed to read --target-file {path}: {exc}") from exc
+    return [
+        stripped
+        for line in text.splitlines()
+        if (stripped := line.strip()) and not stripped.startswith("#")
+    ]
 
 
 def _parse_host_port(value: str, default_port: int) -> tuple[str, int]:

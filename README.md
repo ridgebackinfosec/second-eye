@@ -136,6 +136,30 @@ targets/regexes are still fully enforced for scope matching and are all recorded
 in `manifest.json`'s scope block and `ANALYSIS.md`'s header — they just don't
 affect the directory name.
 
+### Target files
+
+For a long target list, `-tf`/`--target-file <path>` reads targets from a
+line-delimited file instead of repeating `--target`:
+
+```sh
+secondeye proxy start --target-file targets.txt --no-upstream
+```
+
+```
+# targets.txt — one target per line, same syntax --target accepts
+example.com
+corp-example.net
+*.corp.internal
+```
+
+Blank lines and lines starting with `#` are ignored. `-tf`/`--target-file` is
+repeatable too, and combines with any `--target`/`--target-regex` flags — all
+of it is OR'd together the same way. `--target` is *not* required when a
+target file supplies at least one entry; `-tf targets.txt` alone is a valid
+scope. The directory-naming quirk above still applies: an explicit `--target`
+value (if any) wins for the label, otherwise it falls back to the first
+target file's first line.
+
 Point your client at the proxy — `127.0.0.1:8079` by default (browser proxy
 settings, or `curl -x 127.0.0.1:8079 ...`). Traffic flows normally from this point
 on; nothing is recorded yet.

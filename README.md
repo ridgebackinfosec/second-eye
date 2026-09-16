@@ -16,6 +16,14 @@ Traffic to explicitly scoped target domains is recorded to disk and rendered int
 an AI-consumable analysis document; everything else passes through untouched, with
 zero TLS termination or inspection.
 
+```mermaid
+flowchart LR
+    A[Client: browser, curl, or other tooling] -->|proxy settings point here| B[secondeye on 127.0.0.1:8079]
+    B -->|in-scope traffic, chained for manual testing| C[Burp Suite or ZAP, optional]
+    C --> D[Destination]
+    B -->|in-scope with --no-upstream, or out-of-scope blind relay| D
+```
+
 **Core value proposition:** low-effort, structured capture of a specific target's
 traffic — packaged for handoff to an AI chat (corporate-agreement AI or in-house
 LLM) for flow analysis — without giving up the ability to chain through a

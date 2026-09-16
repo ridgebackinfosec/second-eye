@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# venv
+.venv/
+venv/
+
+# Test/lint/type-check artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Claude Code / plugin session state (not project source)
+.remember/
+.claude/
+
+# OS cruft
+.DS_Store
+
+# Internal spec doc, not part of the published repo
+SPEC.md

@@ -1,3 +1,5 @@
+![second-eye — see more. find more.](second-eye-banner.png)
+
 # second-eye
 
 > The name borrows from marksmanship: a sniper or hunter keeps their non-dominant

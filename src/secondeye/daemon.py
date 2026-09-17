@@ -174,6 +174,11 @@ class Daemon:
         """The proxy listener's actual bound port (useful with an ephemeral --listen-address)."""
         return self._listener.bound_port
 
+    @property
+    def ca_was_created(self) -> bool:
+        """Whether this run just generated a brand-new CA (vs. loading an existing one)."""
+        return self._ca.created
+
     async def _handle_status(self, _params: dict[str, object]) -> dict[str, object]:
         active = self._capture_manager.active_capture
         return {
@@ -182,7 +187,11 @@ class Daemon:
                 "listen": f"{self._config.listen_host}:{self.listener_bound_port}",
                 "scope": self._capture_manager.scope_summary(),
                 "active_capture": (
-                    {"name": active.name, "started_at": active.started_at.isoformat()}
+                    {
+                        "name": active.name,
+                        "started_at": active.started_at.isoformat(),
+                        "request_count": self._capture_manager.active_request_count,
+                    }
                     if active is not None
                     else None
                 ),

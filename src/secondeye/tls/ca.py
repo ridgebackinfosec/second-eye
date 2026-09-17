@@ -19,7 +19,7 @@ from cryptography.x509.oid import NameOID
 
 from secondeye.exceptions import CertGenerationError
 
-__all__ = ["CertificateAuthority", "default_state_dir", "load_or_create_ca"]
+__all__ = ["CertificateAuthority", "ca_exists", "default_state_dir", "load_or_create_ca"]
 
 _CA_KEY_SIZE = 2048
 _CA_VALIDITY_DAYS = 3650
@@ -52,6 +52,24 @@ class CertificateAuthority:
     private_key: rsa.RSAPrivateKey
     cert_path: Path
     key_path: Path
+    created: bool = False
+
+
+def ca_exists(state_dir: Path | None = None) -> bool:
+    """Whether a CA has already been generated, without generating one.
+
+    Unlike :func:`load_or_create_ca`, this never creates a CA as a side
+    effect — for read-only callers like ``secondeye ca status``.
+
+    Args:
+        state_dir: secondeye's state directory. Defaults to
+            :func:`default_state_dir`.
+
+    Returns:
+        True if both the cert and key files are already persisted.
+    """
+    ca_dir = (state_dir if state_dir is not None else default_state_dir()) / "ca"
+    return (ca_dir / _CERT_FILENAME).exists() and (ca_dir / _KEY_FILENAME).exists()
 
 
 def load_or_create_ca(state_dir: Path | None = None) -> CertificateAuthority:
@@ -148,4 +166,5 @@ def _generate_ca(ca_dir: Path, cert_path: Path, key_path: Path) -> CertificateAu
         private_key=private_key,
         cert_path=cert_path,
         key_path=key_path,
+        created=True,
     )

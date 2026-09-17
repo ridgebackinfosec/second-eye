@@ -4,7 +4,8 @@ Guidance for Claude Code (or any agentic coding tool) working in this repository
 
 ## What this is
 
-`secondeye` (PyPI package `second-eye`) is a scope-gated, passive HTTP/HTTPS
+`secondeye` (package name `second-eye`, installed via `pipx` from GitHub —
+not published to PyPI, intentionally) is a scope-gated, passive HTTP/HTTPS
 recording proxy for offensive security operators. **`SPEC.md` is the
 authoritative technical specification** — read it before making any
 non-trivial change. This file only covers what `SPEC.md` doesn't: build
@@ -33,7 +34,16 @@ every flag (v0.2.0). CLI UX pass (v0.3.0): a `proxy start` startup banner
 `Daemon.run()`'s new `on_started` callback, unaffected by `-v`/`-q`);
 colorized `✓`/`✗` output (`_green`/`_red` in `cli.py`, respecting `NO_COLOR`
 and non-tty streams); and `argcomplete`-based shell completion (the
-project's first non-load-bearing dependency).
+project's first non-load-bearing dependency). Usability batch (v0.4.0):
+install docs corrected to `pipx install
+git+https://github.com/ridgebackinfosec/second-eye.git` (never published to
+PyPI, intentionally — a deliberate distribution choice, not a gap);
+`secondeye --version`/`-V`; `proxy status` reports a live request count for
+the active capture (`CaptureManager.active_request_count`); `secondeye ca
+status` (read-only — never generates a CA as a side effect, unlike every
+other CA-touching command); and a first-run CA-creation note, both on `ca
+export` (stderr only — stdout carries the raw cert bytes) and in the
+`proxy start` banner (`Daemon.ca_was_created`).
 
 ## Commands
 

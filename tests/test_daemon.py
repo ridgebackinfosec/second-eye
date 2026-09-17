@@ -1,6 +1,7 @@
 """Tests for secondeye.daemon (SPEC.md §2, §4, §9, §14 Phase 7)."""
 
 import asyncio
+import datetime
 import os
 import signal
 import subprocess
@@ -8,9 +9,31 @@ from pathlib import Path
 
 import pytest
 
+from secondeye.capture.har import HarEntry, HarHeader, HarRequest, HarResponse
 from secondeye.daemon import Daemon, DaemonConfig
 from secondeye.exceptions import ConfigError
 from secondeye.recording.control import send_request
+
+
+def _entry() -> HarEntry:
+    return HarEntry(
+        started_at=datetime.datetime.now(datetime.UTC),
+        time_ms=1.0,
+        request=HarRequest(
+            method="GET",
+            url="https://example.com/page",
+            http_version="1.1",
+            headers=(HarHeader("Sec-Fetch-Mode", "navigate"),),
+            body=b"",
+        ),
+        response=HarResponse(
+            status=200,
+            status_text="OK",
+            http_version="1.1",
+            headers=(HarHeader("Content-Type", "text/html"),),
+            body=b"",
+        ),
+    )
 
 
 class TestConfigValidationBeforeBinding:
@@ -155,6 +178,26 @@ class TestStartupAndControlSocket:
             active = result["active_capture"]
             assert isinstance(active, dict)
             assert active["name"] == "t1"
+            assert active["request_count"] == 0
+        finally:
+            await daemon.shutdown()
+
+    async def test_proxy_status_request_count_reflects_recorded_entries(
+        self, tmp_path: Path
+    ) -> None:
+        daemon = _daemon(tmp_path)
+        await daemon.start()
+        try:
+            await send_request(tmp_path / "control.sock", "capture.start", {"name": "t2"})
+            await daemon._capture_manager.record_entry(_entry())
+            await daemon._capture_manager.record_entry(_entry())
+
+            response = await send_request(tmp_path / "control.sock", "proxy.status")
+            result = response["result"]
+            assert isinstance(result, dict)
+            active = result["active_capture"]
+            assert isinstance(active, dict)
+            assert active["request_count"] == 2
         finally:
             await daemon.shutdown()
 
@@ -165,6 +208,17 @@ class TestStartupAndControlSocket:
         assert response["ok"] is True
         await asyncio.wait_for(daemon.wait_for_shutdown(), timeout=5)
         await daemon.shutdown()
+
+
+class TestCaWasCreated:
+    def test_true_on_first_construction(self, tmp_path: Path) -> None:
+        daemon = _daemon(tmp_path)
+        assert daemon.ca_was_created is True
+
+    def test_false_when_ca_already_exists(self, tmp_path: Path) -> None:
+        _daemon(tmp_path)  # first construction generates the CA
+        second = _daemon(tmp_path)
+        assert second.ca_was_created is False
 
 
 class TestSecondInstanceGuard:

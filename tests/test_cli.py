@@ -57,6 +57,23 @@ class TestArgumentParsing:
             cli.main(["bogus"])
 
 
+class TestVersionFlag:
+    def test_version_flag_prints_version_and_exits_zero(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main(["--version"])
+        assert exc_info.value.code == 0
+        out = capsys.readouterr().out
+        assert "secondeye" in out
+        assert out.strip() != "secondeye"  # an actual version number follows
+
+    def test_short_version_flag_also_works(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main(["-V"])
+        assert exc_info.value.code == 0
+
+
 class TestCaExport:
     def test_pem_export_writes_valid_certificate_to_stdout(
         self, capsys: pytest.CaptureFixture[str]
@@ -72,6 +89,52 @@ class TestCaExport:
         cli.main(["ca", "export", "--format", "pem"])
         second = capsys.readouterr().out
         assert first == second
+
+    def test_first_export_notes_new_ca_on_stderr_not_stdout(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        exit_code = cli.main(["ca", "export", "--format", "pem"])
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "new secondeye CA" in captured.err
+        assert "new secondeye CA" not in captured.out
+        assert "BEGIN CERTIFICATE" in captured.out
+
+    def test_second_export_does_not_repeat_new_ca_note(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cli.main(["ca", "export", "--format", "pem"])
+        capsys.readouterr()
+        cli.main(["ca", "export", "--format", "pem"])
+        captured = capsys.readouterr()
+        assert "new secondeye CA" not in captured.err
+
+
+class TestCaStatus:
+    def test_reports_no_ca_before_any_generated(self, capsys: pytest.CaptureFixture[str]) -> None:
+        exit_code = cli.main(["ca", "status"])
+        assert exit_code == 0
+        assert "No CA generated yet" in capsys.readouterr().out
+
+    def test_does_not_itself_generate_a_ca(self, tmp_path: Path, _isolated_home: Path) -> None:
+        cli.main(["ca", "status"])
+        assert not (_isolated_home / ".local" / "state" / "secondeye" / "ca").exists()
+
+    def test_reports_fingerprint_and_validity_after_generation(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cli.main(["ca", "export", "--format", "pem"])
+        capsys.readouterr()
+
+        exit_code = cli.main(["ca", "status"])
+        assert exit_code == 0
+        out = capsys.readouterr().out
+        assert "secondeye Root CA" in out
+        assert "Fingerprint:" in out
+        assert "Valid from:" in out
+        assert "Valid until:" in out
+        assert "days remaining" in out
+        assert "secondeye-ca.pem" in out
 
 
 class TestCommandsWithoutRunningDaemon:
@@ -196,6 +259,33 @@ def _read_lines_with_timeout(
     return lines
 
 
+def _read_available_lines(proc: subprocess.Popen[str], timeout: float = 1.0) -> list[str]:
+    """Drain whatever's already buffered without failing if nothing more arrives.
+
+    Unlike _read_lines_with_timeout, this is for asserting *absence* of
+    extra output — the daemon's control socket already existing means its
+    startup banner has already been flushed, so nothing here blocks on data
+    that hasn't been produced yet.
+    """
+    assert proc.stdout is not None
+    stdout = proc.stdout
+    q: queue.Queue[str | None] = queue.Queue()
+
+    def reader() -> None:
+        for line in iter(stdout.readline, ""):
+            q.put(line)
+
+    thread = threading.Thread(target=reader, daemon=True)
+    thread.start()
+
+    lines: list[str] = []
+    while True:
+        try:
+            lines.append(q.get(timeout=timeout))
+        except queue.Empty:
+            return lines
+
+
 class TestStartupBanner:
     def test_banner_printed_immediately_with_scope_and_next_step(
         self, tmp_path: Path, _isolated_home: Path
@@ -222,6 +312,32 @@ class TestStartupBanner:
             assert "secondeye started" in text
         finally:
             _stop_daemon_subprocess(proc, _isolated_home)
+
+    def test_banner_notes_new_ca_on_first_run(self, tmp_path: Path, _isolated_home: Path) -> None:
+        proc = _spawn_daemon_subprocess(_isolated_home, "--target", "example.com")
+        try:
+            text = "".join(_read_lines_with_timeout(proc, num_lines=8))
+            assert "new secondeye CA" in text
+            assert "secondeye ca export" in text
+        finally:
+            _stop_daemon_subprocess(proc, _isolated_home)
+
+    def test_banner_omits_ca_note_when_ca_already_existed(
+        self, tmp_path: Path, _isolated_home: Path
+    ) -> None:
+        first = _spawn_daemon_subprocess(_isolated_home, "--target", "example.com")
+        _read_lines_with_timeout(first, num_lines=6)
+        _stop_daemon_subprocess(first, _isolated_home)
+
+        second = _spawn_daemon_subprocess(_isolated_home, "--target", "example.com")
+        try:
+            # The control socket already existing means the banner is
+            # already fully flushed; drain it and confirm the CA note isn't
+            # anywhere in it, not just absent from the first few lines.
+            text = "".join(_read_available_lines(second))
+            assert "new secondeye CA" not in text
+        finally:
+            _stop_daemon_subprocess(second, _isolated_home)
 
 
 class TestTargetFile:
@@ -376,6 +492,16 @@ class TestColorHelpers:
         monkeypatch.delenv("NO_COLOR", raising=False)
         monkeypatch.setenv("TERM", "dumb")
         assert cli._green("✓") == "✓"
+
+    def test_yellow_wraps_in_ansi_when_color_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.delenv("TERM", raising=False)
+        assert cli._yellow("⚠") == "\033[33m⚠\033[0m"
+
+    def test_yellow_no_color_when_stdout_not_a_tty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False)
+        assert cli._yellow("⚠") == "⚠"
 
 
 @pytest.fixture
@@ -534,6 +660,7 @@ class TestCaptureLifecycleOutputFormats:
         code, out, _err = _run_cli(capsys, "proxy", "status")
         assert code == 0
         assert "Active capture: active-one (started" in out
+        assert "0 requests so far" in out
         assert "Upstream:       none (--no-upstream)" in out
 
     def test_proxy_stop_success_format(self, capsys: pytest.CaptureFixture[str]) -> None:

@@ -8,7 +8,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 
 from secondeye.exceptions import CertGenerationError
-from secondeye.tls.ca import default_state_dir, load_or_create_ca
+from secondeye.tls.ca import ca_exists, default_state_dir, load_or_create_ca
 
 _OPENSSL_MISSING = shutil.which("openssl") is None
 
@@ -47,6 +47,30 @@ class TestCaGenerationAndPersistence:
             check=False,
         )
         assert result.returncode == 0, result.stderr
+
+
+class TestCreatedFlag:
+    def test_first_generation_reports_created_true(self, tmp_path: Path) -> None:
+        ca = load_or_create_ca(tmp_path)
+        assert ca.created is True
+
+    def test_subsequent_load_reports_created_false(self, tmp_path: Path) -> None:
+        load_or_create_ca(tmp_path)
+        second = load_or_create_ca(tmp_path)
+        assert second.created is False
+
+
+class TestCaExists:
+    def test_false_before_any_ca_generated(self, tmp_path: Path) -> None:
+        assert ca_exists(tmp_path) is False
+
+    def test_true_after_generation(self, tmp_path: Path) -> None:
+        load_or_create_ca(tmp_path)
+        assert ca_exists(tmp_path) is True
+
+    def test_does_not_itself_generate_a_ca(self, tmp_path: Path) -> None:
+        ca_exists(tmp_path)
+        assert not (tmp_path / "ca" / "secondeye-ca.pem").exists()
 
 
 class TestCaLoadFailure:

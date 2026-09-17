@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 _HAR_VERSION = "1.2"
 _CREATOR_NAME = "secondeye"
-_CREATOR_VERSION = "0.3.2"
+_CREATOR_VERSION = "0.4.0"
 _BUFFER_FILENAME = ".buffer.jsonl"
 
 
@@ -124,11 +124,17 @@ class CaptureManager:
         self._active: ActiveCapture | None = None
         self._buffer: CaptureBuffer | None = None
         self._history: list[CaptureResult] = []
+        self._active_request_count = 0
 
     @property
     def active_capture(self) -> ActiveCapture | None:
         """The currently-active capture, or None if none is active."""
         return self._active
+
+    @property
+    def active_request_count(self) -> int:
+        """How many requests the current capture has recorded so far (0 if none active)."""
+        return self._active_request_count
 
     def scope_summary(self) -> dict[str, object]:
         """This run's fixed scope configuration, for status/confirmation output.
@@ -170,6 +176,7 @@ class CaptureManager:
 
         self._buffer = CaptureBuffer(output_dir / _BUFFER_FILENAME)
         self._active = ActiveCapture(name=name, started_at=started_at, output_dir=output_dir)
+        self._active_request_count = 0
         logger.info("capture started: %s", name)
         return self._active
 
@@ -186,6 +193,7 @@ class CaptureManager:
         if self._buffer is None:
             return
         await self._buffer.append(entry)
+        self._active_request_count += 1
 
     async def stop_capture(self) -> CaptureResult:
         """End the active capture and write raw.har/manifest.json/ANALYSIS.md.

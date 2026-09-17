@@ -42,8 +42,10 @@ workflow and the per-connection scope decision.
 
 ## Install
 
+`second-eye` isn't published to PyPI — install straight from GitHub:
+
 ```sh
-pipx install second-eye
+pipx install git+https://github.com/ridgebackinfosec/second-eye.git
 ```
 
 `pipx` is the primary supported install path — it keeps `secondeye` and its
@@ -52,6 +54,8 @@ dependencies isolated from your system/project Python environments.
 **Manual venv fallback:**
 
 ```sh
+git clone https://github.com/ridgebackinfosec/second-eye.git
+cd second-eye
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
@@ -221,9 +225,11 @@ capture before exiting, so you never lose a capture by forgetting to run
 ## Other commands
 
 ```
-secondeye proxy status                    # daemon running? scope? active capture?
+secondeye proxy status                    # daemon running? scope? active capture + live count?
 secondeye proxy stop                      # stop a daemon from another terminal
 secondeye capture list                    # captures completed so far this run
+secondeye ca status                       # CA fingerprint/expiry; never generates one
+secondeye --version                       # print the installed version and exit
 ```
 
 Run `secondeye <noun> <verb> --help` for the full flag reference on any

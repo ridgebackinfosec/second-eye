@@ -8,7 +8,7 @@ per-connection scope decision the daemon makes internally. See the main
 
 ```mermaid
 flowchart TD
-    A[Install secondeye via pipx install second-eye] --> B[secondeye ca export, then trust the CA in browser or device]
+    A[Install secondeye via pipx from GitHub] --> B[secondeye ca export, then trust the CA in browser or device]
     B --> C{Chaining through Burp or ZAP?}
     C -->|Yes| D[secondeye ca import-upstream --from-burp]
     C -->|No| E[Plan to use --no-upstream]

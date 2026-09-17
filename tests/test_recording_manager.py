@@ -63,6 +63,33 @@ class TestNoActiveCaptureInvariant:
             await manager.stop_capture()
 
 
+class TestActiveRequestCount:
+    def test_zero_before_any_capture_started(self, tmp_path: Path) -> None:
+        manager = _manager(tmp_path)
+        assert manager.active_request_count == 0
+
+    async def test_increments_as_entries_are_recorded(self, tmp_path: Path) -> None:
+        manager = _manager(tmp_path)
+        manager.start_capture("live-count")
+        assert manager.active_request_count == 0
+
+        await manager.record_entry(_entry())
+        assert manager.active_request_count == 1
+
+        await manager.record_entry(_entry())
+        await manager.record_entry(_entry())
+        assert manager.active_request_count == 3
+
+    async def test_resets_to_zero_on_a_new_capture(self, tmp_path: Path) -> None:
+        manager = _manager(tmp_path)
+        manager.start_capture("first")
+        await manager.record_entry(_entry())
+        await manager.stop_capture()
+
+        manager.start_capture("second")
+        assert manager.active_request_count == 0
+
+
 class TestStartCapture:
     def test_start_returns_active_capture_with_correct_output_dir(self, tmp_path: Path) -> None:
         manager = _manager(tmp_path)

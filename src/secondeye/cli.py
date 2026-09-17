@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime
+import importlib.metadata
 import logging
 import os
 import sys
@@ -23,12 +25,13 @@ from typing import TextIO
 import argcomplete
 import h11
 from cryptography import x509
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.x509.oid import NameOID
 
 from secondeye.daemon import Daemon, DaemonConfig
 from secondeye.exceptions import ConfigError, SecondEyeError, UpstreamConnectionError
 from secondeye.recording.control import ControlSocketUnavailableError, send_request
-from secondeye.tls.ca import default_state_dir, load_or_create_ca
+from secondeye.tls.ca import ca_exists, default_state_dir, load_or_create_ca
 
 __all__ = ["main"]
 
@@ -36,6 +39,11 @@ _DEFAULT_LISTEN = "127.0.0.1:8079"
 _DEFAULT_UPSTREAM = "127.0.0.1:8080"
 _DEFAULT_LISTEN_PORT = 8079
 _DEFAULT_UPSTREAM_PORT = 8080
+
+try:
+    _VERSION = importlib.metadata.version("second-eye")
+except importlib.metadata.PackageNotFoundError:
+    _VERSION = "unknown"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -65,6 +73,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description="A scope-gated, passive HTTP/HTTPS recording proxy for offensive "
         "security operators.",
     )
+    parser.add_argument("--version", "-V", action="version", version=f"%(prog)s {_VERSION}")
     nouns = parser.add_subparsers(dest="noun", required=True)
 
     proxy = nouns.add_parser("proxy", help="Run and control the recording proxy daemon.")
@@ -213,6 +222,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ca_export.set_defaults(handler=_cmd_ca_export)
 
+    ca_verbs.add_parser(
+        "status",
+        description="Report the persisted CA's fingerprint and validity, without "
+        "generating one if none exists yet.",
+    ).set_defaults(handler=_cmd_ca_status)
+
     ca_import = ca_verbs.add_parser(
         "import-upstream",
         description="Fetch an upstream intercepting proxy's CA certificate for use "
@@ -296,6 +311,13 @@ def _print_startup_banner(daemon: Daemon, config: DaemonConfig, scope: dict[str,
         "Point your client's proxy settings here. Run 'secondeye capture start "
         "--name <label>' when ready to record."
     )
+    if daemon.ca_was_created:
+        print()
+        print(
+            f"{_yellow('⚠')} Generated a new secondeye CA (first run) — your client won't "
+            "trust in-scope HTTPS until you import it. Run 'secondeye ca export' and "
+            "see the README for trust-store setup."
+        )
     sys.stdout.flush()
 
 
@@ -341,7 +363,11 @@ def _cmd_proxy_status(_args: argparse.Namespace) -> int:
     else:
         assert isinstance(active, dict)
         started_at = _format_local_time(str(active["started_at"]))
-        print(f"Active capture: {active['name']} (started {started_at})")
+        request_count = active["request_count"]
+        print(
+            f"Active capture: {active['name']} (started {started_at}, "
+            f"{request_count} requests so far)"
+        )
     return 0
 
 
@@ -458,8 +484,56 @@ def _cmd_capture_list(_args: argparse.Namespace) -> int:
 
 def _cmd_ca_export(args: argparse.Namespace) -> int:
     ca = load_or_create_ca(default_state_dir())
+    if ca.created:
+        # stderr only: stdout carries the raw cert bytes for redirection
+        # (`secondeye ca export ... > secondeye-ca.der`).
+        print(
+            f"{_green('✓')} Generated a new secondeye CA (first run) at {ca.cert_path}.",
+            file=sys.stderr,
+        )
     encoding = serialization.Encoding.DER if args.format == "der" else serialization.Encoding.PEM
     sys.stdout.buffer.write(ca.certificate.public_bytes(encoding))
+    return 0
+
+
+def _cmd_ca_status(_args: argparse.Namespace) -> int:
+    state_dir = default_state_dir()
+    if not ca_exists(state_dir):
+        print(
+            "No CA generated yet. Run 'secondeye ca export' or 'secondeye proxy start' "
+            "to generate one."
+        )
+        return 0
+
+    ca = load_or_create_ca(state_dir)  # safe: existence just confirmed, won't generate
+    cert = ca.certificate
+    fingerprint = cert.fingerprint(hashes.SHA256())
+    fingerprint_hex = ":".join(f"{b:02X}" for b in fingerprint)
+    subject_cn_value = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+    subject_cn = (
+        subject_cn_value if isinstance(subject_cn_value, str) else subject_cn_value.decode()
+    )
+    not_before = cert.not_valid_before_utc
+    not_after = cert.not_valid_after_utc
+    now = datetime.datetime.now(datetime.UTC)
+
+    print(f"CA path:     {ca.cert_path}")
+    print(f"Subject:     {subject_cn}")
+    print(f"Serial:      {cert.serial_number}")
+    print(f"Fingerprint: {fingerprint_hex}")
+    print(f"Valid from:  {not_before.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    if now > not_after:
+        expired_days = (now - not_after).days
+        print(
+            f"Valid until: {not_after.strftime('%Y-%m-%d %H:%M:%S UTC')} "
+            f"{_yellow(f'(EXPIRED {expired_days} days ago)')}"
+        )
+    else:
+        days_remaining = (not_after - now).days
+        print(
+            f"Valid until: {not_after.strftime('%Y-%m-%d %H:%M:%S UTC')} "
+            f"({days_remaining} days remaining)"
+        )
     return 0
 
 
@@ -602,6 +676,11 @@ def _red(text: str) -> str:
     return f"\033[31m{text}\033[0m" if _use_color(sys.stderr) else text
 
 
+def _yellow(text: str) -> str:
+    """Color for stdout warning messages (e.g. the startup banner's first-run CA note)."""
+    return f"\033[33m{text}\033[0m" if _use_color(sys.stdout) else text
+
+
 def _format_bytes(n: int) -> str:
     if n < 1024:
         return f"{n}B"
@@ -623,15 +702,11 @@ def _format_scope(scope: dict[str, object]) -> str:
 
 
 def _format_utc_time(iso_value: str) -> str:
-    import datetime
-
     dt = datetime.datetime.fromisoformat(iso_value.replace("Z", "+00:00"))
     return dt.astimezone(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def _format_local_time(iso_value: str) -> str:
-    import datetime
-
     dt = datetime.datetime.fromisoformat(iso_value.replace("Z", "+00:00"))
     return dt.astimezone(datetime.UTC).strftime("%H:%M:%S")
 

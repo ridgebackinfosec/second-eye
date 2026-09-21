@@ -14,8 +14,10 @@ from secondeye.analysis.classify import Category, ClassifiedEntry
 from secondeye.analysis.cluster import Cluster, cluster_entries
 from secondeye.analysis.manifest import Flow
 from secondeye.analysis.signals import (
+    DebugPageHint,
     OutlierInfo,
     compute_auth_mechanisms,
+    compute_debug_page_hints,
     compute_distinct_endpoints,
     compute_parameter_names,
     compute_security_header_posture,
@@ -63,6 +65,7 @@ def render_analysis_md(
     cluster_by_anchor_index = {c.anchor.index: c for c in clusters}
     timing_outliers = compute_timing_outliers(classified)
     size_outliers = compute_size_outliers(classified)
+    debug_page_hints = compute_debug_page_hints(classified)
 
     narrative_flows = [f for f in flows if f.collapsed_into is None]
 
@@ -90,6 +93,7 @@ def render_analysis_md(
                 timing_outliers=timing_outliers,
                 size_outliers=size_outliers,
                 confirmed_by_index=confirmed_by_index,
+                debug_page_hints=debug_page_hints,
             )
         )
         lines.append("")
@@ -230,6 +234,7 @@ def _render_flow(
     timing_outliers: dict[int, OutlierInfo],
     size_outliers: dict[int, OutlierInfo],
     confirmed_by_index: dict[int, bool],
+    debug_page_hints: dict[int, DebugPageHint],
 ) -> list[str]:
     heading_text = _flow_heading_text(flow, entry_by_index, confirmed_by_index)
     lines = [f"## {heading_text}", ""]
@@ -259,6 +264,11 @@ def _render_flow(
     if outlier_note is not None:
         lines.append("")
         lines.append(outlier_note)
+
+    debug_note = _render_debug_page_note(flow, debug_page_hints)
+    if debug_note is not None:
+        lines.append("")
+        lines.append(debug_note)
 
     lines.append("")
     lines.append(f"*(har_entry_index: {flow.har_entry_indices[0]})*")
@@ -419,6 +429,16 @@ def _render_outlier_note(
     if not notes:
         return None
     return f"**Note:** {'; '.join(notes)}."
+
+
+def _render_debug_page_note(flow: Flow, debug_page_hints: dict[int, DebugPageHint]) -> str | None:
+    hint = debug_page_hints.get(flow.har_entry_indices[0])
+    if hint is None:
+        return None
+    return (
+        f"**Warning:** response body matches a known {hint.framework} debug/error page "
+        f"fingerprint (`{hint.signature}`)."
+    )
 
 
 def _render_assets_summary(cluster: Cluster) -> str | None:

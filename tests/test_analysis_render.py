@@ -132,6 +132,34 @@ class TestHeaderBlock:
         assert "raw.har" in md
 
 
+class TestDebugPageNotes:
+    def test_debug_page_note_rendered_on_flow(self) -> None:
+        entry = HarEntry(
+            started_at=_at(0),
+            time_ms=1.0,
+            request=HarRequest(
+                method="GET",
+                url="https://example.com/broken",
+                http_version="1.1",
+                headers=(),
+                body=b"",
+            ),
+            response=HarResponse(
+                status=500,
+                status_text="Internal Server Error",
+                http_version="1.1",
+                headers=(HarHeader("Content-Type", "text/html"),),
+                body=b"You're seeing this because you have DEBUG = True",
+            ),
+        )
+        md = _render([entry])
+        assert "**Warning:** response body matches a known Django debug/error page" in md
+
+    def test_no_debug_note_for_ordinary_response(self) -> None:
+        md = _render([_xhr_entry(_at(0), "https://example.com/api/data")])
+        assert "debug/error page" not in md
+
+
 class TestNavigationRendering:
     def test_short_body_rendered_inline_without_truncation_marker(self) -> None:
         md = _render([_nav_entry(_at(0), "https://example.com/login", body=b"<html>short</html>")])

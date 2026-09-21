@@ -399,3 +399,53 @@ class TestParameterNames:
         classified = classify_entries([_static_entry()])
 
         assert compute_parameter_names(classified) == []
+
+
+class TestDebugPageHints:
+    def test_django_debug_page_detected(self) -> None:
+        from secondeye.analysis.signals import DebugPageHint, compute_debug_page_hints
+
+        entries = [_entry(body=b"You're seeing this because you have DEBUG = True")]
+        classified = classify_entries(entries)
+
+        hints = compute_debug_page_hints(classified)
+
+        assert hints == {
+            0: DebugPageHint(
+                framework="Django", signature="You're seeing this because you have DEBUG = True"
+            )
+        }
+
+    def test_flask_werkzeug_debugger_detected(self) -> None:
+        from secondeye.analysis.signals import compute_debug_page_hints
+
+        entries = [_entry(body=b"<title>Werkzeug Debugger</title>")]
+        classified = classify_entries(entries)
+
+        hints = compute_debug_page_hints(classified)
+
+        assert hints[0].framework == "Flask/Werkzeug"
+
+    def test_ordinary_response_produces_no_hint(self) -> None:
+        from secondeye.analysis.signals import compute_debug_page_hints
+
+        entries = [_entry(body=b'{"ok": true}')]
+        classified = classify_entries(entries)
+
+        assert compute_debug_page_hints(classified) == {}
+
+    def test_static_assets_excluded(self) -> None:
+        from secondeye.analysis.signals import compute_debug_page_hints
+
+        entries = [_static_entry(body=b"Werkzeug Debugger")]
+        classified = classify_entries(entries)
+
+        assert compute_debug_page_hints(classified) == {}
+
+    def test_binary_body_does_not_raise(self) -> None:
+        from secondeye.analysis.signals import compute_debug_page_hints
+
+        entries = [_entry(body=b"\xff\xfe\x00\x01")]
+        classified = classify_entries(entries)
+
+        assert compute_debug_page_hints(classified) == {}

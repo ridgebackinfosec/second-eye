@@ -20,6 +20,7 @@ from secondeye.capture.har import header_value
 
 __all__ = [
     "AuthMechanismSummary",
+    "DebugPageHint",
     "EndpointSummary",
     "OutlierInfo",
     "ParameterNameSummary",
@@ -27,6 +28,7 @@ __all__ = [
     "StackHint",
     "StatusCodeSummary",
     "compute_auth_mechanisms",
+    "compute_debug_page_hints",
     "compute_distinct_endpoints",
     "compute_parameter_names",
     "compute_security_header_posture",
@@ -53,6 +55,17 @@ _COOKIE_NAME_HINTS = {
     "connect.sid": "Node.js/Express",
     "django_sessionid": "Django",
 }
+_DEBUG_PAGE_SIGNATURES = (
+    ("Django", "You're seeing this because you have DEBUG = True"),
+    ("Django", "django.core.handlers.exception"),
+    ("Flask/Werkzeug", "Werkzeug Debugger"),
+    ("Flask/Werkzeug", "Traceback (most recent call last)"),
+    ("Rails", "ActionController::RoutingError"),
+    ("Rails", "Rails.root"),
+    ("ASP.NET", "Server Error in '/' Application"),
+    ("ASP.NET", "Stack Trace:"),
+    ("PHP", "Fatal error:"),
+)
 _AUTH_SCHEME_LABELS = {
     "bearer": "Bearer token",
     "basic": "Basic auth",
@@ -102,6 +115,21 @@ class StackHint:
 
     value: str
     source: str
+
+
+@dataclass(frozen=True)
+class DebugPageHint:
+    """A framework debug/error page fingerprint matched in a response body.
+
+    Attributes:
+        framework: The framework the fingerprint is associated with, e.g. "Django".
+        signature: The literal substring that matched. This is always one of
+            this codebase's own fixed signatures (never attacker-controlled
+            text), so it needs no escaping when rendered.
+    """
+
+    framework: str
+    signature: str
 
 
 @dataclass(frozen=True)
@@ -394,6 +422,48 @@ def compute_stack_hints(classified: list[ClassifiedEntry]) -> list[StackHint]:
             if guess and key not in seen:
                 seen.add(key)
                 hints.append(StackHint(value=guess, source=source))
+    return hints
+
+
+def _decode_for_scan(body: bytes) -> str:
+    """Best-effort UTF-8 decode for substring/regex scanning only.
+
+    Never raises — invalid bytes are replaced, not rejected, since this is
+    only used for pattern matching, not display. Rendering (render.py) has
+    its own separate decode path (_decode_for_display) with different
+    fallback behavior for actual document output.
+    """
+    return body.decode("utf-8", errors="replace")
+
+
+def compute_debug_page_hints(classified: list[ClassifiedEntry]) -> dict[int, DebugPageHint]:
+    """Flag entries whose response body matches a known framework
+    debug/error page fingerprint (SPEC.md §11.10).
+
+    A fixed signature table, same shape as _COOKIE_NAME_HINTS — not a
+    general stack-trace/error-page heuristic (that would have much higher
+    false-positive risk on APIs that legitimately return structured error
+    JSON). Static-asset entries are excluded.
+
+    Args:
+        classified: All of the capture's entries, classified.
+
+    Returns:
+        {har_entry_index: DebugPageHint}, only for entries whose response
+        body matched. If multiple signatures match the same body, the
+        first match in _DEBUG_PAGE_SIGNATURES order wins.
+    """
+    hints: dict[int, DebugPageHint] = {}
+    for c in classified:
+        if c.category == Category.STATIC_ASSET:
+            continue
+        if not c.entry.response.body:
+            continue
+        body_text = _decode_for_scan(c.entry.response.body)
+        for framework, signature in _DEBUG_PAGE_SIGNATURES:
+            if signature in body_text:
+                hints[c.index] = DebugPageHint(framework=framework, signature=signature)
+                break
     return hints
 
 

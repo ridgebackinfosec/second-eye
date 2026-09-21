@@ -749,3 +749,43 @@ class TestIdValueReuseNotes:
     def test_no_reuse_note_on_first_occurrence(self) -> None:
         md = _render([_xhr_entry(_at(0), "https://example.com/api/orders?order_id=9001")])
         assert "was first observed in" not in md
+
+
+class TestSequenceDiagram:
+    def test_diagram_section_present_with_flow_arrows(self) -> None:
+        md = _render(
+            [
+                _nav_entry(_at(0), "https://example.com/login"),
+                _xhr_entry(
+                    _at(1), "https://example.com/api/data", referer="https://example.com/login"
+                ),
+            ]
+        )
+        assert "## Sequence Diagram" in md
+        assert "```mermaid" in md
+        assert "sequenceDiagram" in md
+        assert "participant Operator" in md
+        assert "participant Target" in md
+        assert "Operator->>Target: GET /login" in md
+        assert "Target-->>Operator: 200" in md
+
+    def test_diagram_omitted_when_no_flows(self) -> None:
+        md = _render([])
+        assert "## Sequence Diagram" not in md
+
+    def test_redirect_chain_collapses_to_one_arrow_pair(self) -> None:
+        md = _render(
+            [
+                _nav_entry(
+                    _at(0), "https://example.com/dashboard", status=302, location="/dashboard/home"
+                ),
+                _nav_entry(
+                    _at(0.1), "https://example.com/dashboard/home", status=200, body=b"<html/>"
+                ),
+            ]
+        )
+        # One flow section for the chain (asserted elsewhere in
+        # TestRedirectChainRendering); the diagram collapses it to one
+        # arrow pair too, with the final status and hop count noted.
+        assert "Operator->>Target: GET /dashboard" in md
+        assert "Target-->>Operator: 200 (final, 2 hops)" in md

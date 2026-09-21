@@ -89,6 +89,7 @@ def render_analysis_md(
     )
     lines.extend(_render_summary(classified))
     lines.extend(_render_capture_signals(classified))
+    lines.extend(_render_sequence_diagram(narrative_flows, entry_by_index))
     lines.extend(_render_toc(narrative_flows, entry_by_index, confirmed_by_index))
 
     for flow in narrative_flows:
@@ -211,6 +212,52 @@ def _render_capture_signals(classified: list[ClassifiedEntry]) -> list[str]:
                 f"- {_inline_safe(issue.cookie_name)}: missing {missing_str} "
                 f"(entry #{issue.har_entry_index})"
             )
+    return lines
+
+
+def _render_sequence_diagram(
+    narrative_flows: list[Flow], entry_by_index: dict[int, HarEntry]
+) -> list[str]:
+    """Render a capture-wide Mermaid sequence diagram (SPEC.md §11.10).
+
+    One request/response arrow pair per narrative flow. Two participants
+    only ("Operator", "Target") — this proxy observes browser<->target
+    traffic exclusively, so a third "Backend" lane would have nothing
+    real to draw. Request paths are percent-encoded and HTTP methods are
+    restricted to RFC 7230 token characters, so neither needs escaping
+    before interpolation here — unlike Summary section's freely-typed
+    parameter names/values (see _inline_safe).
+
+    Args:
+        narrative_flows: This capture's non-collapsed flows, in
+            chronological order.
+        entry_by_index: Lookup from raw.har index to HarEntry.
+
+    Returns:
+        Empty list if there are no narrative flows.
+    """
+    if not narrative_flows:
+        return []
+    lines = [
+        "",
+        "## Sequence Diagram",
+        "",
+        "```mermaid",
+        "sequenceDiagram",
+        "    participant Operator",
+        "    participant Target",
+    ]
+    for flow in narrative_flows:
+        primary = entry_by_index[flow.har_entry_indices[0]]
+        request_label = f"{primary.request.method} {_path_and_query(primary.request.url)}"
+        if flow.redirect_chain and flow.redirect_hops:
+            final_status = flow.redirect_hops[-1].status
+            response_label = f"{final_status} (final, {len(flow.redirect_hops)} hops)"
+        else:
+            response_label = str(primary.response.status)
+        lines.append(f"    Operator->>Target: {request_label}")
+        lines.append(f"    Target-->>Operator: {response_label}")
+    lines.append("```")
     return lines
 
 

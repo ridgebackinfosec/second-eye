@@ -78,7 +78,11 @@ def render_analysis_md(
         lines.append("")
         lines.extend(
             _render_flow(
-                flow, entry_by_index, cluster_by_anchor_index, timing_outliers, size_outliers
+                flow,
+                entry_by_index,
+                cluster_by_anchor_index,
+                timing_outliers=timing_outliers,
+                size_outliers=size_outliers,
             )
         )
         lines.append("")
@@ -136,7 +140,7 @@ def _render_capture_signals(classified: list[ClassifiedEntry]) -> list[str]:
     if hints:
         lines.append("**Stack fingerprint hints:**")
         for hint in hints:
-            lines.append(f"- {hint.value} ({hint.source})")
+            lines.append(f"- `{hint.value[:200]}` ({hint.source})")
     return lines
 
 
@@ -156,7 +160,7 @@ def _anchor_slug(heading_text: str) -> str:
     heading shapes (not a fully general GFM-slug implementation).
     """
     lowered = heading_text.lower()
-    kept = "".join(ch for ch in lowered if ch.isalnum() or ch in " -")
+    kept = "".join(ch for ch in lowered if ch.isalnum() or ch in " -_")
     return kept.replace(" ", "-")
 
 
@@ -362,8 +366,8 @@ def _render_outlier_note(
     size = size_outliers.get(primary_index)
     if size is not None:
         notes.append(
-            f"response body {_format_bytes(int(size.value))} — ~{size.multiple:g}x the "
-            f"capture's median ({_format_bytes(int(size.median))})"
+            f"response body {_format_bytes_precise(int(size.value))} — ~{size.multiple:g}x the "
+            f"capture's median ({_format_bytes_precise(int(size.median))})"
         )
     if not notes:
         return None
@@ -463,6 +467,12 @@ def _join_with_and(items: list[str]) -> str:
 
 def _format_bytes(n: int) -> str:
     return f"{max(1, round(n / 1024))}KB" if n else "0KB"
+
+
+def _format_bytes_precise(n: int) -> str:
+    if n < 1024:
+        return f"{n}B"
+    return _format_bytes(n)
 
 
 def _path_and_query(url: str) -> str:

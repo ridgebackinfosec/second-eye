@@ -286,6 +286,19 @@ class TestOutlierNotes:
         md = _render(entries)
         assert "response time" not in md
 
+    def test_large_response_gets_size_note_with_precise_sub_kb_byte_counts(self) -> None:
+        entries = [
+            _xhr_entry(_at(i), f"https://example.com/api/{i}", body=b"x" * 100) for i in range(5)
+        ]
+        entries[2] = _xhr_entry(_at(2), "https://example.com/api/2", body=b"y" * 1000)
+        md = _render(entries)
+        # Both values are under 1KB, so both must render as exact byte
+        # counts, not KB-rounded values that make the note self-contradictory
+        # (the old behavior rounded both 100 and 1000 bytes to "1KB").
+        assert "response body 1000B" in md
+        assert "median (100B)" in md
+        assert "1KB" not in md
+
 
 class TestCaptureSignalsSection:
     def test_security_header_posture_rendered(self) -> None:
@@ -320,6 +333,34 @@ class TestCaptureSignalsSection:
         md = _render([entry])
         assert "Stack fingerprint hints" in md
         assert "nginx/1.25.0" in md
+        assert "`nginx/1.25.0`" in md
+
+    def test_long_server_header_value_truncated_and_fenced(self) -> None:
+        long_value = "x" * 300
+        entry = HarEntry(
+            started_at=_at(0),
+            time_ms=1.0,
+            request=HarRequest(
+                method="GET",
+                url="https://example.com/api/data",
+                http_version="1.1",
+                headers=(HarHeader("X-Requested-With", "XMLHttpRequest"),),
+                body=b"",
+            ),
+            response=HarResponse(
+                status=200,
+                status_text="OK",
+                http_version="1.1",
+                headers=(
+                    HarHeader("Content-Type", "application/json"),
+                    HarHeader("Server", long_value),
+                ),
+                body=b'{"ok":true}',
+            ),
+        )
+        md = _render([entry])
+        assert long_value not in md
+        assert f"`{'x' * 200}`" in md
 
 
 class TestTableOfContents:
@@ -343,6 +384,22 @@ class TestTableOfContents:
         )
         assert "[Flow 1 —" in md
         assert "[Flow 2 —" in md
+
+    def test_toc_anchor_keeps_underscores(self) -> None:
+        md = _render(
+            [
+                _nav_entry(_at(0), "https://example.com/user_profile"),
+                _xhr_entry(
+                    _at(1),
+                    "https://example.com/api/a",
+                    referer="https://example.com/user_profile",
+                ),
+            ]
+        )
+        # GitHub's slugger keeps underscores as word characters — the TOC
+        # link must match, not collapse "user_profile" to "userprofile".
+        assert "(#flow-2--140201-xhr-api-referer-user_profile)" in md
+        assert "(#flow-2--140201-xhr-api-referer-userprofile)" not in md
 
 
 class TestStateChangingMethodHighlighting:

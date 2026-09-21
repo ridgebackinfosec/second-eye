@@ -311,3 +311,31 @@ class TestAuthMechanisms:
         classified = classify_entries([entry])
 
         assert compute_auth_mechanisms(classified) == []
+
+
+class TestStatusCodeRollup:
+    def test_counts_by_status_sorted_ascending(self) -> None:
+        from secondeye.analysis.signals import StatusCodeSummary, compute_status_code_rollup
+
+        entries = [_entry(status=200), _entry(status=200), _entry(status=403), _entry(status=500)]
+        classified = classify_entries(entries)
+
+        rollup = compute_status_code_rollup(classified)
+
+        assert rollup == [
+            StatusCodeSummary(status=200, count=2),
+            StatusCodeSummary(status=403, count=1),
+            StatusCodeSummary(status=500, count=1),
+        ]
+
+    def test_static_assets_excluded(self) -> None:
+        from secondeye.analysis.signals import compute_status_code_rollup
+
+        classified = classify_entries([_static_entry()])
+
+        assert compute_status_code_rollup(classified) == []
+
+    def test_empty_capture_produces_empty_list(self) -> None:
+        from secondeye.analysis.signals import compute_status_code_rollup
+
+        assert compute_status_code_rollup([]) == []

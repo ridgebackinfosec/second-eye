@@ -20,6 +20,7 @@ from secondeye.analysis.signals import (
     compute_security_header_posture,
     compute_size_outliers,
     compute_stack_hints,
+    compute_status_code_rollup,
     compute_timing_outliers,
 )
 from secondeye.capture.har import HarEntry, HarHeader, header_value
@@ -132,7 +133,8 @@ def _render_header(
 def _render_summary(classified: list[ClassifiedEntry]) -> list[str]:
     endpoints = compute_distinct_endpoints(classified)
     mechanisms = compute_auth_mechanisms(classified)
-    if not endpoints and not mechanisms:
+    status_rollup = compute_status_code_rollup(classified)
+    if not endpoints and not mechanisms and not status_rollup:
         return []
     lines = ["", "## Summary", ""]
     if endpoints:
@@ -144,6 +146,10 @@ def _render_summary(classified: list[ClassifiedEntry]) -> list[str]:
         lines.append("**Auth mechanisms observed:**")
         for m in mechanisms:
             lines.append(f"- {m.kind}: {m.request_count} request(s)")
+        lines.append("")
+    if status_rollup:
+        status_str = ", ".join(f"{s.count}x {s.status}" for s in status_rollup)
+        lines.append(f"**Status codes:** {status_str}")
     return lines
 
 

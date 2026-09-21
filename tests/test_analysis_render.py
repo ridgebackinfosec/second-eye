@@ -485,6 +485,15 @@ class TestSummarySection:
         assert "**Auth mechanisms observed:**" in md
         assert "- Bearer token: 1 request(s)" in md
 
+    def test_status_code_rollup_rendered(self) -> None:
+        entries = [
+            _xhr_entry(_at(0), "https://example.com/api/a"),
+            _xhr_entry(_at(1), "https://example.com/api/b"),
+        ]
+        md = _render(entries)
+        assert "**Status codes:**" in md
+        assert "2x 200" in md
+
 
 class TestPhase1SignalsIntegration:
     def test_all_phase1_signals_present_together(self) -> None:

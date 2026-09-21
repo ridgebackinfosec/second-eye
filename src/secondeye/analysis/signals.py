@@ -23,11 +23,13 @@ __all__ = [
     "OutlierInfo",
     "SecurityHeaderPosture",
     "StackHint",
+    "StatusCodeSummary",
     "compute_auth_mechanisms",
     "compute_distinct_endpoints",
     "compute_security_header_posture",
     "compute_size_outliers",
     "compute_stack_hints",
+    "compute_status_code_rollup",
     "compute_timing_outliers",
 ]
 
@@ -126,6 +128,19 @@ class AuthMechanismSummary:
     request_count: int
 
 
+@dataclass(frozen=True)
+class StatusCodeSummary:
+    """How many non-static-asset responses returned a given status code.
+
+    Attributes:
+        status: The HTTP status code.
+        count: How many responses returned it.
+    """
+
+    status: int
+    count: int
+
+
 def compute_distinct_endpoints(classified: list[ClassifiedEntry]) -> list[EndpointSummary]:
     """Aggregate distinct (method, path) pairs touched during the capture.
 
@@ -182,6 +197,25 @@ def compute_auth_mechanisms(classified: list[ClassifiedEntry]) -> list[AuthMecha
         for kind in _AUTH_KIND_ORDER
         if kind in counts
     ]
+
+
+def compute_status_code_rollup(classified: list[ClassifiedEntry]) -> list[StatusCodeSummary]:
+    """Aggregate response status codes across the capture (SPEC.md §11.9).
+
+    Args:
+        classified: All of the capture's entries, classified.
+
+    Returns:
+        One StatusCodeSummary per distinct status code, sorted ascending
+        by status code. Static-asset entries are excluded.
+    """
+    counts: dict[int, int] = {}
+    for c in classified:
+        if c.category == Category.STATIC_ASSET:
+            continue
+        status = c.entry.response.status
+        counts[status] = counts.get(status, 0) + 1
+    return [StatusCodeSummary(status=s, count=counts[s]) for s in sorted(counts)]
 
 
 def compute_timing_outliers(

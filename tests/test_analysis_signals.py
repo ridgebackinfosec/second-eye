@@ -4,7 +4,9 @@ import datetime
 
 from secondeye.analysis.classify import classify_entries
 from secondeye.analysis.signals import (
+    AuthMechanismSummary,
     EndpointSummary,
+    compute_auth_mechanisms,
     compute_distinct_endpoints,
     compute_security_header_posture,
     compute_size_outliers,
@@ -246,3 +248,66 @@ class TestDistinctEndpoints:
         classified = classify_entries([_static_entry()])
 
         assert compute_distinct_endpoints(classified) == []
+
+
+class TestAuthMechanisms:
+    def test_bearer_token_counted(self) -> None:
+        entries = [
+            _entry(request_headers=(HarHeader("Authorization", "Bearer abc123"),)),
+            _entry(request_headers=(HarHeader("Authorization", "Bearer xyz789"),)),
+        ]
+        classified = classify_entries(entries)
+
+        mechanisms = compute_auth_mechanisms(classified)
+
+        assert mechanisms == [AuthMechanismSummary(kind="Bearer token", request_count=2)]
+
+    def test_session_cookie_counted_separately_from_bearer(self) -> None:
+        entries = [
+            _entry(request_headers=(HarHeader("Authorization", "Bearer abc123"),)),
+            _entry(request_headers=(HarHeader("Cookie", "session_id=abc"),)),
+        ]
+        classified = classify_entries(entries)
+
+        mechanisms = compute_auth_mechanisms(classified)
+
+        assert mechanisms == [
+            AuthMechanismSummary(kind="Bearer token", request_count=1),
+            AuthMechanismSummary(kind="session cookie", request_count=1),
+        ]
+
+    def test_basic_auth_recognized(self) -> None:
+        entries = [_entry(request_headers=(HarHeader("Authorization", "Basic dXNlcjpwYXNz"),))]
+        classified = classify_entries(entries)
+
+        assert compute_auth_mechanisms(classified) == [
+            AuthMechanismSummary(kind="Basic auth", request_count=1)
+        ]
+
+    def test_no_auth_headers_produces_empty_list(self) -> None:
+        classified = classify_entries([_entry()])
+
+        assert compute_auth_mechanisms(classified) == []
+
+    def test_static_assets_excluded_even_with_auth_headers(self) -> None:
+        entry = HarEntry(
+            started_at=_T0,
+            time_ms=1.0,
+            request=HarRequest(
+                method="GET",
+                url="https://example.com/app.js",
+                http_version="1.1",
+                headers=(HarHeader("Authorization", "Bearer abc123"),),
+                body=b"",
+            ),
+            response=HarResponse(
+                status=200,
+                status_text="OK",
+                http_version="1.1",
+                headers=(HarHeader("Content-Type", "application/javascript"),),
+                body=b"x",
+            ),
+        )
+        classified = classify_entries([entry])
+
+        assert compute_auth_mechanisms(classified) == []

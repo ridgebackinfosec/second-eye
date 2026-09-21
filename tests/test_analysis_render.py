@@ -458,6 +458,33 @@ class TestSummarySection:
         assert "**Endpoints touched:**" in md
         assert "- GET /api/data" in md
 
+    def test_auth_mechanisms_rendered(self) -> None:
+        entry = HarEntry(
+            started_at=_at(0),
+            time_ms=1.0,
+            request=HarRequest(
+                method="GET",
+                url="https://example.com/api/data",
+                http_version="1.1",
+                headers=(
+                    HarHeader("X-Requested-With", "XMLHttpRequest"),
+                    HarHeader("Sec-Fetch-Mode", "cors"),
+                    HarHeader("Authorization", "Bearer abc123"),
+                ),
+                body=b"",
+            ),
+            response=HarResponse(
+                status=200,
+                status_text="OK",
+                http_version="1.1",
+                headers=(HarHeader("Content-Type", "application/json"),),
+                body=b'{"ok":true}',
+            ),
+        )
+        md = _render([entry])
+        assert "**Auth mechanisms observed:**" in md
+        assert "- Bearer token: 1 request(s)" in md
+
 
 class TestPhase1SignalsIntegration:
     def test_all_phase1_signals_present_together(self) -> None:

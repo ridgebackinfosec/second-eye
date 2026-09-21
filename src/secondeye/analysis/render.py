@@ -14,8 +14,8 @@ from secondeye.analysis.classify import Category, ClassifiedEntry
 from secondeye.analysis.cluster import Cluster, cluster_entries
 from secondeye.analysis.manifest import Flow
 from secondeye.analysis.signals import (
-    EndpointSummary,
     OutlierInfo,
+    compute_auth_mechanisms,
     compute_distinct_endpoints,
     compute_security_header_posture,
     compute_size_outliers,
@@ -130,12 +130,20 @@ def _render_header(
 
 
 def _render_summary(classified: list[ClassifiedEntry]) -> list[str]:
-    endpoints: list[EndpointSummary] = compute_distinct_endpoints(classified)
-    if not endpoints:
+    endpoints = compute_distinct_endpoints(classified)
+    mechanisms = compute_auth_mechanisms(classified)
+    if not endpoints and not mechanisms:
         return []
-    lines = ["", "## Summary", "", "**Endpoints touched:**"]
-    for e in endpoints:
-        lines.append(f"- {e.method} {e.path}")
+    lines = ["", "## Summary", ""]
+    if endpoints:
+        lines.append("**Endpoints touched:**")
+        for e in endpoints:
+            lines.append(f"- {e.method} {e.path}")
+        lines.append("")
+    if mechanisms:
+        lines.append("**Auth mechanisms observed:**")
+        for m in mechanisms:
+            lines.append(f"- {m.kind}: {m.request_count} request(s)")
     return lines
 
 

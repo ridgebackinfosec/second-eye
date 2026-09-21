@@ -18,10 +18,12 @@ from secondeye.analysis.classify import Category, ClassifiedEntry
 from secondeye.capture.har import header_value
 
 __all__ = [
+    "AuthMechanismSummary",
     "EndpointSummary",
     "OutlierInfo",
     "SecurityHeaderPosture",
     "StackHint",
+    "compute_auth_mechanisms",
     "compute_distinct_endpoints",
     "compute_security_header_posture",
     "compute_size_outliers",
@@ -46,6 +48,12 @@ _COOKIE_NAME_HINTS = {
     "connect.sid": "Node.js/Express",
     "django_sessionid": "Django",
 }
+_AUTH_SCHEME_LABELS = {
+    "bearer": "Bearer token",
+    "basic": "Basic auth",
+    "digest": "Digest auth",
+}
+_AUTH_KIND_ORDER = ("Bearer token", "Basic auth", "Digest auth", "session cookie")
 
 
 @dataclass(frozen=True)
@@ -104,6 +112,20 @@ class EndpointSummary:
     path: str
 
 
+@dataclass(frozen=True)
+class AuthMechanismSummary:
+    """An observed authentication mechanism and how often it appeared.
+
+    Attributes:
+        kind: A human-readable mechanism label, e.g. "Bearer token" or
+            "session cookie".
+        request_count: How many requests carried this mechanism.
+    """
+
+    kind: str
+    request_count: int
+
+
 def compute_distinct_endpoints(classified: list[ClassifiedEntry]) -> list[EndpointSummary]:
     """Aggregate distinct (method, path) pairs touched during the capture.
 
@@ -127,6 +149,39 @@ def compute_distinct_endpoints(classified: list[ClassifiedEntry]) -> list[Endpoi
             seen.add(key)
             endpoints.append(EndpointSummary(method=c.entry.request.method, path=path))
     return endpoints
+
+
+def compute_auth_mechanisms(classified: list[ClassifiedEntry]) -> list[AuthMechanismSummary]:
+    """Aggregate observed authentication mechanisms (SPEC.md §11.9).
+
+    Never surfaces the actual token or cookie value anywhere — only the
+    mechanism kind and how many requests used it.
+
+    Args:
+        classified: All of the capture's entries, classified.
+
+    Returns:
+        One AuthMechanismSummary per observed kind, in a fixed order
+        (Bearer, Basic, Digest, session cookie); kinds with zero
+        occurrences are omitted. Static-asset entries are excluded.
+    """
+    counts: dict[str, int] = {}
+    for c in classified:
+        if c.category == Category.STATIC_ASSET:
+            continue
+        auth_header = header_value(c.entry.request.headers, "authorization")
+        if auth_header:
+            scheme = auth_header.split(" ", 1)[0].strip().lower()
+            label = _AUTH_SCHEME_LABELS.get(scheme)
+            if label:
+                counts[label] = counts.get(label, 0) + 1
+        if header_value(c.entry.request.headers, "cookie") is not None:
+            counts["session cookie"] = counts.get("session cookie", 0) + 1
+    return [
+        AuthMechanismSummary(kind=kind, request_count=counts[kind])
+        for kind in _AUTH_KIND_ORDER
+        if kind in counts
+    ]
 
 
 def compute_timing_outliers(

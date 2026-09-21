@@ -3,7 +3,11 @@
 import datetime
 
 from secondeye.analysis.classify import classify_entries
-from secondeye.analysis.signals import compute_size_outliers, compute_timing_outliers
+from secondeye.analysis.signals import (
+    compute_security_header_posture,
+    compute_size_outliers,
+    compute_timing_outliers,
+)
 from secondeye.capture.har import HarEntry, HarHeader, HarRequest, HarResponse
 
 _T0 = datetime.datetime(2026, 9, 15, 14, 2, 0, tzinfo=datetime.UTC)
@@ -120,3 +124,37 @@ class TestSizeOutliers:
         classified = classify_entries(entries)
 
         assert compute_size_outliers(classified) == {}
+
+
+class TestSecurityHeaderPosture:
+    def test_counts_presence_across_non_static_entries(self) -> None:
+        entries = [
+            _entry(extra_response_headers=(HarHeader("Strict-Transport-Security", "max-age=1"),)),
+            _entry(),
+            _entry(extra_response_headers=(HarHeader("Strict-Transport-Security", "max-age=1"),)),
+        ]
+        classified = classify_entries(entries)
+
+        posture = compute_security_header_posture(classified)
+
+        hsts = next(p for p in posture if p.header_name == "Strict-Transport-Security")
+        assert hsts.present_count == 2
+        assert hsts.total_count == 3
+
+    def test_tracks_all_four_headers_even_if_never_present(self) -> None:
+        classified = classify_entries([_entry()])
+
+        posture = compute_security_header_posture(classified)
+
+        names = {p.header_name for p in posture}
+        assert names == {
+            "Strict-Transport-Security",
+            "Content-Security-Policy",
+            "X-Frame-Options",
+            "X-Content-Type-Options",
+        }
+
+    def test_excludes_static_asset_entries(self) -> None:
+        classified = classify_entries([_static_entry()])
+
+        assert compute_security_header_posture(classified) == []

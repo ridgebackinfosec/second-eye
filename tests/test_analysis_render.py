@@ -285,3 +285,12 @@ class TestOutlierNotes:
         entries = [_xhr_entry(_at(i), f"https://example.com/api/{i}") for i in range(5)]
         md = _render(entries)
         assert "response time" not in md
+
+
+class TestCaptureSignalsSection:
+    def test_security_header_posture_rendered(self) -> None:
+        md = _render(
+            [_xhr_entry(_at(0), "https://example.com/api/data")],
+        )
+        assert "## Capture Signals" in md
+        assert "Strict-Transport-Security: present on 0/1 responses" in md

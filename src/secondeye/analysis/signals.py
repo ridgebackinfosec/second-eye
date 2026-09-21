@@ -14,9 +14,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from secondeye.analysis.classify import Category, ClassifiedEntry
+from secondeye.capture.har import header_value
 
 __all__ = [
     "OutlierInfo",
+    "SecurityHeaderPosture",
+    "compute_security_header_posture",
     "compute_size_outliers",
     "compute_timing_outliers",
 ]
@@ -24,6 +27,12 @@ __all__ = [
 _MIN_SAMPLE_SIZE = 5
 _TIMING_OUTLIER_MULTIPLE = 5.0
 _SIZE_OUTLIER_MULTIPLE = 10.0
+_TRACKED_SECURITY_HEADERS = (
+    "Strict-Transport-Security",
+    "Content-Security-Policy",
+    "X-Frame-Options",
+    "X-Content-Type-Options",
+)
 
 
 @dataclass(frozen=True)
@@ -39,6 +48,21 @@ class OutlierInfo:
     value: float
     median: float
     multiple: float
+
+
+@dataclass(frozen=True)
+class SecurityHeaderPosture:
+    """How consistently a security-relevant response header was observed.
+
+    Attributes:
+        header_name: The header's canonical name, e.g. "Strict-Transport-Security".
+        present_count: How many considered responses included this header.
+        total_count: Total responses considered (static-asset entries excluded).
+    """
+
+    header_name: str
+    present_count: int
+    total_count: int
 
 
 def compute_timing_outliers(
@@ -88,6 +112,34 @@ def compute_size_outliers(
         value_fn=lambda c: float(len(c.entry.response.body)),
         threshold_multiple=threshold_multiple,
     )
+
+
+def compute_security_header_posture(
+    classified: list[ClassifiedEntry],
+) -> list[SecurityHeaderPosture]:
+    """Aggregate presence of well-known security response headers (SPEC.md §11.8).
+
+    Args:
+        classified: All of the capture's entries, classified.
+
+    Returns:
+        One SecurityHeaderPosture per tracked header, in
+        _TRACKED_SECURITY_HEADERS order. Empty list if there are no
+        non-static-asset entries.
+    """
+    candidates = [c for c in classified if c.category != Category.STATIC_ASSET]
+    if not candidates:
+        return []
+    return [
+        SecurityHeaderPosture(
+            header_name=name,
+            present_count=sum(
+                1 for c in candidates if header_value(c.entry.response.headers, name) is not None
+            ),
+            total_count=len(candidates),
+        )
+        for name in _TRACKED_SECURITY_HEADERS
+    ]
 
 
 def _compute_outliers(

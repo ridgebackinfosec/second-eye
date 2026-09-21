@@ -13,7 +13,12 @@ import json
 from secondeye.analysis.classify import Category, ClassifiedEntry
 from secondeye.analysis.cluster import Cluster, cluster_entries
 from secondeye.analysis.manifest import Flow
-from secondeye.analysis.signals import OutlierInfo, compute_size_outliers, compute_timing_outliers
+from secondeye.analysis.signals import (
+    OutlierInfo,
+    compute_security_header_posture,
+    compute_size_outliers,
+    compute_timing_outliers,
+)
 from secondeye.capture.har import HarEntry, HarHeader, header_value
 
 __all__ = ["render_analysis_md"]
@@ -64,6 +69,7 @@ def render_analysis_md(
             classified=classified,
         )
     )
+    lines.extend(_render_capture_signals(classified))
 
     for flow in narrative_flows:
         lines.append("")
@@ -109,6 +115,16 @@ def _render_header(
         "",
         "---",
     ]
+
+
+def _render_capture_signals(classified: list[ClassifiedEntry]) -> list[str]:
+    posture = compute_security_header_posture(classified)
+    if not posture:
+        return []
+    lines = ["", "## Capture Signals", "", "**Security headers observed:**"]
+    for p in posture:
+        lines.append(f"- {p.header_name}: present on {p.present_count}/{p.total_count} responses")
+    return lines
 
 
 def _render_flow(

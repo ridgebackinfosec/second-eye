@@ -27,6 +27,7 @@ __all__ = ["render_analysis_md"]
 _NAVIGATION_TRUNCATE_CHARS = 2000
 _OTHER_INLINE_MAX_BYTES = 500
 _ASSET_KIND_ORDER = ("JS", "CSS", "font", "image", "other")
+_STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
 
 
 def render_analysis_md(
@@ -235,7 +236,7 @@ def _render_redirect_chain(flow: Flow, entry_by_index: dict[int, HarEntry]) -> l
     for i, hop in enumerate(hops):
         entry = entry_by_index[hop.har_entry_index]
         if i == 0:
-            parts.append(f"**{entry.request.method}** {entry.request.url}")
+            parts.append(f"{_method_label(entry.request.method)} {entry.request.url}")
         else:
             parts.append(_path_and_query(entry.request.url))
         parts.append(f"`{hop.status}`")
@@ -316,7 +317,9 @@ def _render_xhr_api(flow: Flow, entry_by_index: dict[int, HarEntry]) -> list[str
 
 def _render_other(flow: Flow, entry_by_index: dict[int, HarEntry]) -> list[str]:
     entry = entry_by_index[flow.har_entry_indices[0]]
-    lines = [f"**{entry.request.method}** {entry.request.url} → `{entry.response.status}`"]
+    lines = [
+        f"{_method_label(entry.request.method)} {entry.request.url} → `{entry.response.status}`"
+    ]
     if entry.response.body and len(entry.response.body) < _OTHER_INLINE_MAX_BYTES:
         lines.append("")
         lines.append("```")
@@ -405,9 +408,16 @@ def _content_type(headers: tuple[HarHeader, ...]) -> str:
     return (value or "").split(";", 1)[0].strip()
 
 
+def _method_label(method: str) -> str:
+    label = f"**{method}**"
+    if method.upper() in _STATE_CHANGING_METHODS:
+        label += " *(state-changing)*"
+    return label
+
+
 def _status_line(entry: HarEntry, content_type: str) -> str:
     return (
-        f"**{entry.request.method}** {entry.request.url} "
+        f"{_method_label(entry.request.method)} {entry.request.url} "
         f"→ `{entry.response.status}` `{content_type}`"
     )
 

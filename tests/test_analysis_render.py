@@ -343,3 +343,16 @@ class TestTableOfContents:
         )
         assert "[Flow 1 —" in md
         assert "[Flow 2 —" in md
+
+
+class TestStateChangingMethodHighlighting:
+    def test_post_request_marked_state_changing(self) -> None:
+        md = _render(
+            [_xhr_entry(_at(0), "https://example.com/api/create", request_body=b'{"x":1}')]
+        )
+        assert "**POST** *(state-changing)*" in md
+
+    def test_get_request_not_marked(self) -> None:
+        md = _render([_xhr_entry(_at(0), "https://example.com/api/data")])
+        assert "**GET**" in md
+        assert "*(state-changing)*" not in md

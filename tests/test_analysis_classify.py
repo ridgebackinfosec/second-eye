@@ -147,6 +147,45 @@ class TestOtherClassification:
         assert classify_entry(entry) == Category.OTHER
 
 
+class TestClassificationConfidence:
+    def test_sec_fetch_mode_navigate_is_confirmed(self) -> None:
+        entries = [_entry(request_headers=(HarHeader("Sec-Fetch-Mode", "navigate"),))]
+        classified = classify_entries(entries)
+        assert classified[0].confirmed is True
+
+    def test_sec_fetch_mode_cors_with_xrw_is_confirmed(self) -> None:
+        entries = [
+            _entry(
+                request_headers=(
+                    HarHeader("Sec-Fetch-Mode", "cors"),
+                    HarHeader("X-Requested-With", "XMLHttpRequest"),
+                )
+            )
+        ]
+        classified = classify_entries(entries)
+        assert classified[0].confirmed is True
+
+    def test_html_content_type_fallback_is_unconfirmed(self) -> None:
+        entries = [_entry(method="GET", response_headers=(HarHeader("Content-Type", "text/html"),))]
+        classified = classify_entries(entries)
+        assert classified[0].confirmed is False
+
+    def test_json_content_type_fallback_is_unconfirmed(self) -> None:
+        entries = [_entry(response_headers=(HarHeader("Content-Type", "application/json"),))]
+        classified = classify_entries(entries)
+        assert classified[0].confirmed is False
+
+    def test_static_asset_is_unconfirmed(self) -> None:
+        entries = [_entry(url="https://example.com/app.js")]
+        classified = classify_entries(entries)
+        assert classified[0].confirmed is False
+
+    def test_other_category_is_unconfirmed(self) -> None:
+        entries = [_entry(method="DELETE", url="https://example.com/resource")]
+        classified = classify_entries(entries)
+        assert classified[0].confirmed is False
+
+
 class TestClassifyEntries:
     def test_assigns_sequential_indices_matching_position(self) -> None:
         entries = [

@@ -54,6 +54,7 @@ def render_analysis_md(
         The full ANALYSIS.md markdown text.
     """
     entry_by_index = {c.index: c.entry for c in classified}
+    confirmed_by_index = {c.index: c.confirmed for c in classified}
     clusters = cluster_entries(classified)
     cluster_by_anchor_index = {c.anchor.index: c for c in clusters}
     timing_outliers = compute_timing_outliers(classified)
@@ -72,7 +73,7 @@ def render_analysis_md(
         )
     )
     lines.extend(_render_capture_signals(classified))
-    lines.extend(_render_toc(narrative_flows, entry_by_index))
+    lines.extend(_render_toc(narrative_flows, entry_by_index, confirmed_by_index))
 
     for flow in narrative_flows:
         lines.append("")
@@ -83,6 +84,7 @@ def render_analysis_md(
                 cluster_by_anchor_index,
                 timing_outliers=timing_outliers,
                 size_outliers=size_outliers,
+                confirmed_by_index=confirmed_by_index,
             )
         )
         lines.append("")
@@ -144,12 +146,16 @@ def _render_capture_signals(classified: list[ClassifiedEntry]) -> list[str]:
     return lines
 
 
-def _render_toc(narrative_flows: list[Flow], entry_by_index: dict[int, HarEntry]) -> list[str]:
+def _render_toc(
+    narrative_flows: list[Flow],
+    entry_by_index: dict[int, HarEntry],
+    confirmed_by_index: dict[int, bool],
+) -> list[str]:
     if not narrative_flows:
         return []
     lines = ["", "## Contents", ""]
     for flow in narrative_flows:
-        heading_text = _flow_heading_text(flow, entry_by_index)
+        heading_text = _flow_heading_text(flow, entry_by_index, confirmed_by_index)
         lines.append(f"- [{heading_text}](#{_anchor_slug(heading_text)})")
     return lines
 
@@ -164,7 +170,9 @@ def _anchor_slug(heading_text: str) -> str:
     return kept.replace(" ", "-")
 
 
-def _flow_heading_text(flow: Flow, entry_by_index: dict[int, HarEntry]) -> str:
+def _flow_heading_text(
+    flow: Flow, entry_by_index: dict[int, HarEntry], confirmed_by_index: dict[int, bool]
+) -> str:
     time_str = flow.started_at.strftime("%H:%M:%S")
     header_suffix = flow.category.value
     if flow.redirect_chain:
@@ -174,7 +182,10 @@ def _flow_heading_text(flow: Flow, entry_by_index: dict[int, HarEntry]) -> str:
         referer = header_value(primary.request.headers, "referer")
         if referer:
             header_suffix += f", referer: {_path_and_query(referer)}"
-    return f"Flow {flow.flow_id} — {time_str} ({header_suffix})"
+    heading = f"Flow {flow.flow_id} — {time_str} ({header_suffix})"
+    if not confirmed_by_index.get(flow.har_entry_indices[0], True):
+        heading += " *(guessed)*"
+    return heading
 
 
 def _render_flow(
@@ -183,8 +194,9 @@ def _render_flow(
     cluster_by_anchor_index: dict[int, Cluster],
     timing_outliers: dict[int, OutlierInfo],
     size_outliers: dict[int, OutlierInfo],
+    confirmed_by_index: dict[int, bool],
 ) -> list[str]:
-    heading_text = _flow_heading_text(flow, entry_by_index)
+    heading_text = _flow_heading_text(flow, entry_by_index, confirmed_by_index)
     lines = [f"## {heading_text}", ""]
 
     if flow.redirect_chain:

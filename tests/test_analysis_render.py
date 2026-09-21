@@ -415,6 +415,36 @@ class TestStateChangingMethodHighlighting:
         assert "*(state-changing)*" not in md
 
 
+class TestClassificationConfidenceMarker:
+    def test_guessed_marker_on_unconfirmed_flow(self) -> None:
+        # Classified via the text/html content-type fallback, not a
+        # confirmed Sec-Fetch-Mode: navigate header.
+        entry = HarEntry(
+            started_at=_at(0),
+            time_ms=1.0,
+            request=HarRequest(
+                method="GET",
+                url="https://example.com/login",
+                http_version="1.1",
+                headers=(),
+                body=b"",
+            ),
+            response=HarResponse(
+                status=200,
+                status_text="OK",
+                http_version="1.1",
+                headers=(HarHeader("Content-Type", "text/html"),),
+                body=b"<html></html>",
+            ),
+        )
+        md = _render([entry])
+        assert "*(guessed)*" in md
+
+    def test_no_marker_on_confirmed_flow(self) -> None:
+        md = _render([_nav_entry(_at(0), "https://example.com/login")])
+        assert "*(guessed)*" not in md
+
+
 class TestPhase1SignalsIntegration:
     def test_all_phase1_signals_present_together(self) -> None:
         slow_entry = HarEntry(

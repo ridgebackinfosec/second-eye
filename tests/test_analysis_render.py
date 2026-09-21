@@ -320,3 +320,26 @@ class TestCaptureSignalsSection:
         md = _render([entry])
         assert "Stack fingerprint hints" in md
         assert "nginx/1.25.0" in md
+
+
+class TestTableOfContents:
+    def test_toc_section_present_with_correct_anchor(self) -> None:
+        md = _render([_nav_entry(_at(0), "https://example.com/login")])
+        assert "## Contents" in md
+        assert "[Flow 1 — 14:02:00 (navigation)](#flow-1--140200-navigation)" in md
+
+    def test_toc_omitted_when_no_flows(self) -> None:
+        md = _render([])
+        assert "## Contents" not in md
+
+    def test_toc_lists_every_narrative_flow(self) -> None:
+        md = _render(
+            [
+                _nav_entry(_at(0), "https://example.com/login"),
+                _xhr_entry(
+                    _at(1), "https://example.com/api/a", referer="https://example.com/login"
+                ),
+            ]
+        )
+        assert "[Flow 1 —" in md
+        assert "[Flow 2 —" in md

@@ -71,6 +71,7 @@ def render_analysis_md(
         )
     )
     lines.extend(_render_capture_signals(classified))
+    lines.extend(_render_toc(narrative_flows, entry_by_index))
 
     for flow in narrative_flows:
         lines.append("")
@@ -138,13 +139,27 @@ def _render_capture_signals(classified: list[ClassifiedEntry]) -> list[str]:
     return lines
 
 
-def _render_flow(
-    flow: Flow,
-    entry_by_index: dict[int, HarEntry],
-    cluster_by_anchor_index: dict[int, Cluster],
-    timing_outliers: dict[int, OutlierInfo],
-    size_outliers: dict[int, OutlierInfo],
-) -> list[str]:
+def _render_toc(narrative_flows: list[Flow], entry_by_index: dict[int, HarEntry]) -> list[str]:
+    if not narrative_flows:
+        return []
+    lines = ["", "## Contents", ""]
+    for flow in narrative_flows:
+        heading_text = _flow_heading_text(flow, entry_by_index)
+        lines.append(f"- [{heading_text}](#{_anchor_slug(heading_text)})")
+    return lines
+
+
+def _anchor_slug(heading_text: str) -> str:
+    """Best-effort approximation of GitHub-flavored markdown's heading-anchor
+    slugification, tuned for this renderer's actual '## Flow N — ...'
+    heading shapes (not a fully general GFM-slug implementation).
+    """
+    lowered = heading_text.lower()
+    kept = "".join(ch for ch in lowered if ch.isalnum() or ch in " -")
+    return kept.replace(" ", "-")
+
+
+def _flow_heading_text(flow: Flow, entry_by_index: dict[int, HarEntry]) -> str:
     time_str = flow.started_at.strftime("%H:%M:%S")
     header_suffix = flow.category.value
     if flow.redirect_chain:
@@ -154,8 +169,18 @@ def _render_flow(
         referer = header_value(primary.request.headers, "referer")
         if referer:
             header_suffix += f", referer: {_path_and_query(referer)}"
+    return f"Flow {flow.flow_id} — {time_str} ({header_suffix})"
 
-    lines = [f"## Flow {flow.flow_id} — {time_str} ({header_suffix})", ""]
+
+def _render_flow(
+    flow: Flow,
+    entry_by_index: dict[int, HarEntry],
+    cluster_by_anchor_index: dict[int, Cluster],
+    timing_outliers: dict[int, OutlierInfo],
+    size_outliers: dict[int, OutlierInfo],
+) -> list[str]:
+    heading_text = _flow_heading_text(flow, entry_by_index)
+    lines = [f"## {heading_text}", ""]
 
     if flow.redirect_chain:
         lines.extend(_render_redirect_chain(flow, entry_by_index))

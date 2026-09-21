@@ -494,6 +494,11 @@ class TestSummarySection:
         assert "**Status codes:**" in md
         assert "2x 200" in md
 
+    def test_parameter_names_rendered(self) -> None:
+        md = _render([_xhr_entry(_at(0), "https://example.com/api/users?user_id=1")])
+        assert "**Parameter names observed:**" in md
+        assert "user_id (query)" in md
+
 
 class TestPhase1SignalsIntegration:
     def test_all_phase1_signals_present_together(self) -> None:

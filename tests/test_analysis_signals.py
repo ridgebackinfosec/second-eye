@@ -6,8 +6,10 @@ from secondeye.analysis.classify import classify_entries
 from secondeye.analysis.signals import (
     AuthMechanismSummary,
     EndpointSummary,
+    ParameterNameSummary,
     compute_auth_mechanisms,
     compute_distinct_endpoints,
+    compute_parameter_names,
     compute_security_header_posture,
     compute_size_outliers,
     compute_stack_hints,
@@ -339,3 +341,61 @@ class TestStatusCodeRollup:
         from secondeye.analysis.signals import compute_status_code_rollup
 
         assert compute_status_code_rollup([]) == []
+
+
+class TestParameterNames:
+    def test_query_parameter_names_aggregated(self) -> None:
+        entries = [
+            _entry(url="https://example.com/api/users?user_id=1&page=2"),
+            _entry(url="https://example.com/api/users?user_id=2"),
+        ]
+        classified = classify_entries(entries)
+
+        params = compute_parameter_names(classified)
+
+        assert ParameterNameSummary(name="user_id", source="query", occurrence_count=2) in params
+        assert ParameterNameSummary(name="page", source="query", occurrence_count=1) in params
+
+    def test_json_body_top_level_keys_aggregated(self) -> None:
+        entries = [
+            _entry(
+                method="POST",
+                request_headers=(HarHeader("Content-Type", "application/json"),),
+                request_body=b'{"order_id": 42, "note": "test"}',
+            )
+        ]
+        classified = classify_entries(entries)
+
+        params = compute_parameter_names(classified)
+
+        assert ParameterNameSummary(name="order_id", source="body", occurrence_count=1) in params
+        assert ParameterNameSummary(name="note", source="body", occurrence_count=1) in params
+
+    def test_non_dict_json_body_produces_no_body_params(self) -> None:
+        entries = [
+            _entry(
+                method="POST",
+                request_headers=(HarHeader("Content-Type", "application/json"),),
+                request_body=b"[1, 2, 3]",
+            )
+        ]
+        classified = classify_entries(entries)
+
+        assert [p for p in compute_parameter_names(classified) if p.source == "body"] == []
+
+    def test_malformed_json_body_does_not_raise(self) -> None:
+        entries = [
+            _entry(
+                method="POST",
+                request_headers=(HarHeader("Content-Type", "application/json"),),
+                request_body=b"{not valid json",
+            )
+        ]
+        classified = classify_entries(entries)
+
+        assert [p for p in compute_parameter_names(classified) if p.source == "body"] == []
+
+    def test_static_assets_excluded(self) -> None:
+        classified = classify_entries([_static_entry()])
+
+        assert compute_parameter_names(classified) == []

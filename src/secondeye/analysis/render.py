@@ -17,6 +17,7 @@ from secondeye.analysis.signals import (
     OutlierInfo,
     compute_auth_mechanisms,
     compute_distinct_endpoints,
+    compute_parameter_names,
     compute_security_header_posture,
     compute_size_outliers,
     compute_stack_hints,
@@ -134,7 +135,8 @@ def _render_summary(classified: list[ClassifiedEntry]) -> list[str]:
     endpoints = compute_distinct_endpoints(classified)
     mechanisms = compute_auth_mechanisms(classified)
     status_rollup = compute_status_code_rollup(classified)
-    if not endpoints and not mechanisms and not status_rollup:
+    parameters = compute_parameter_names(classified)
+    if not endpoints and not mechanisms and not status_rollup and not parameters:
         return []
     lines = ["", "## Summary", ""]
     if endpoints:
@@ -150,6 +152,10 @@ def _render_summary(classified: list[ClassifiedEntry]) -> list[str]:
     if status_rollup:
         status_str = ", ".join(f"{s.count}x {s.status}" for s in status_rollup)
         lines.append(f"**Status codes:** {status_str}")
+        lines.append("")
+    if parameters:
+        names_str = ", ".join(f"{p.name} ({p.source})" for p in parameters)
+        lines.append(f"**Parameter names observed:** {names_str}")
     return lines
 
 

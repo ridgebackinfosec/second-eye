@@ -9,10 +9,11 @@ that compute lives here and rendering lives in render.py (CLAUDE.md).
 
 from __future__ import annotations
 
+import json
 import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from secondeye.analysis.classify import Category, ClassifiedEntry
 from secondeye.capture.har import header_value
@@ -21,11 +22,13 @@ __all__ = [
     "AuthMechanismSummary",
     "EndpointSummary",
     "OutlierInfo",
+    "ParameterNameSummary",
     "SecurityHeaderPosture",
     "StackHint",
     "StatusCodeSummary",
     "compute_auth_mechanisms",
     "compute_distinct_endpoints",
+    "compute_parameter_names",
     "compute_security_header_posture",
     "compute_size_outliers",
     "compute_stack_hints",
@@ -141,6 +144,22 @@ class StatusCodeSummary:
     count: int
 
 
+@dataclass(frozen=True)
+class ParameterNameSummary:
+    """A distinct parameter NAME observed in query strings or JSON request
+    bodies — never the value (SPEC.md §11.9's IDOR-candidate use case).
+
+    Attributes:
+        name: The parameter name.
+        source: "query" or "body".
+        occurrence_count: How many entries carried this (name, source) pair.
+    """
+
+    name: str
+    source: str
+    occurrence_count: int
+
+
 def compute_distinct_endpoints(classified: list[ClassifiedEntry]) -> list[EndpointSummary]:
     """Aggregate distinct (method, path) pairs touched during the capture.
 
@@ -216,6 +235,55 @@ def compute_status_code_rollup(classified: list[ClassifiedEntry]) -> list[Status
         status = c.entry.response.status
         counts[status] = counts.get(status, 0) + 1
     return [StatusCodeSummary(status=s, count=counts[s]) for s in sorted(counts)]
+
+
+def compute_parameter_names(classified: list[ClassifiedEntry]) -> list[ParameterNameSummary]:
+    """Aggregate distinct query-string and JSON-body top-level parameter
+    names across the capture, to spot IDOR-candidate parameters like
+    user_id or order_id (SPEC.md §11.9). Never surfaces parameter values.
+
+    Args:
+        classified: All of the capture's entries, classified.
+
+    Returns:
+        Deduplicated ParameterNameSummary entries: query names (first-seen
+        order) followed by body names (first-seen order). Static-asset
+        entries are excluded.
+    """
+    query_counts: dict[str, int] = {}
+    query_order: list[str] = []
+    body_counts: dict[str, int] = {}
+    body_order: list[str] = []
+
+    for c in classified:
+        if c.category == Category.STATIC_ASSET:
+            continue
+
+        query = urlsplit(c.entry.request.url).query
+        for name in parse_qs(query):
+            if name not in query_counts:
+                query_order.append(name)
+            query_counts[name] = query_counts.get(name, 0) + 1
+
+        content_type = header_value(c.entry.request.headers, "content-type") or ""
+        if "json" in content_type.lower() and c.entry.request.body:
+            try:
+                parsed = json.loads(c.entry.request.body)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if isinstance(parsed, dict):
+                for name in parsed:
+                    if name not in body_counts:
+                        body_order.append(name)
+                    body_counts[name] = body_counts.get(name, 0) + 1
+
+    return [
+        ParameterNameSummary(name=n, source="query", occurrence_count=query_counts[n])
+        for n in query_order
+    ] + [
+        ParameterNameSummary(name=n, source="body", occurrence_count=body_counts[n])
+        for n in body_order
+    ]
 
 
 def compute_timing_outliers(

@@ -18,6 +18,7 @@ from secondeye.analysis.signals import (
     OutlierInfo,
     SecretFinding,
     compute_auth_mechanisms,
+    compute_cookie_flag_issues,
     compute_cors_misconfigurations,
     compute_debug_page_hints,
     compute_distinct_endpoints,
@@ -174,7 +175,8 @@ def _render_capture_signals(classified: list[ClassifiedEntry]) -> list[str]:
     posture = compute_security_header_posture(classified)
     hints = compute_stack_hints(classified)
     cors_findings = compute_cors_misconfigurations(classified)
-    if not posture and not hints and not cors_findings:
+    cookie_issues = compute_cookie_flag_issues(classified)
+    if not posture and not hints and not cors_findings and not cookie_issues:
         return []
     lines = ["", "## Capture Signals", ""]
     if posture:
@@ -195,6 +197,15 @@ def _render_capture_signals(classified: list[ClassifiedEntry]) -> list[str]:
             lines.append(
                 f"- entry #{finding.har_entry_index}: Access-Control-Allow-Origin: * "
                 "combined with Access-Control-Allow-Credentials: true"
+            )
+        lines.append("")
+    if cookie_issues:
+        lines.append("**Cookie flag issues:**")
+        for issue in cookie_issues:
+            missing_str = ", ".join(issue.missing_flags)
+            lines.append(
+                f"- {_inline_safe(issue.cookie_name)}: missing {missing_str} "
+                f"(entry #{issue.har_entry_index})"
             )
     return lines
 

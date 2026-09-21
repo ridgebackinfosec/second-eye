@@ -21,6 +21,7 @@ from secondeye.capture.har import header_value
 
 __all__ = [
     "AuthMechanismSummary",
+    "CookieFlagIssue",
     "CorsMisconfiguration",
     "DebugPageHint",
     "EndpointSummary",
@@ -31,6 +32,7 @@ __all__ = [
     "StackHint",
     "StatusCodeSummary",
     "compute_auth_mechanisms",
+    "compute_cookie_flag_issues",
     "compute_cors_misconfigurations",
     "compute_debug_page_hints",
     "compute_distinct_endpoints",
@@ -142,6 +144,22 @@ class CorsMisconfiguration:
 
     har_entry_index: int
     allow_origin: str
+
+
+@dataclass(frozen=True)
+class CookieFlagIssue:
+    """A Set-Cookie header missing a recommended security flag.
+
+    Attributes:
+        cookie_name: The cookie's name.
+        missing_flags: Which of Secure/HttpOnly/SameSite were absent, in
+            that fixed order.
+        har_entry_index: Where this cookie name was first observed.
+    """
+
+    cookie_name: str
+    missing_flags: tuple[str, ...]
+    har_entry_index: int
 
 
 @dataclass(frozen=True)
@@ -472,6 +490,51 @@ def compute_cors_misconfigurations(
                 CorsMisconfiguration(har_entry_index=c.index, allow_origin=allow_origin)
             )
     return findings
+
+
+def compute_cookie_flag_issues(classified: list[ClassifiedEntry]) -> list[CookieFlagIssue]:
+    """Audit Set-Cookie headers for missing Secure/HttpOnly/SameSite flags
+    (SPEC.md §11.10).
+
+    Args:
+        classified: All of the capture's entries, classified.
+
+    Returns:
+        One CookieFlagIssue per distinct cookie name with at least one
+        missing flag, first-seen order. A cookie name observed more than
+        once is only ever reported from its first occurrence — later
+        occurrences (even with different flags) are not re-checked.
+        Static-asset entries are excluded.
+    """
+    seen: set[str] = set()
+    issues: list[CookieFlagIssue] = []
+    for c in classified:
+        if c.category == Category.STATIC_ASSET:
+            continue
+        for header in c.entry.response.headers:
+            if header.name.lower() != "set-cookie":
+                continue
+            cookie_name = header.value.split("=", 1)[0].strip()
+            if cookie_name in seen:
+                continue
+            seen.add(cookie_name)
+            attrs = header.value.lower()
+            missing = tuple(
+                flag
+                for flag, marker in (
+                    ("Secure", "secure"),
+                    ("HttpOnly", "httponly"),
+                    ("SameSite", "samesite"),
+                )
+                if marker not in attrs
+            )
+            if missing:
+                issues.append(
+                    CookieFlagIssue(
+                        cookie_name=cookie_name, missing_flags=missing, har_entry_index=c.index
+                    )
+                )
+    return issues
 
 
 def compute_stack_hints(classified: list[ClassifiedEntry]) -> list[StackHint]:

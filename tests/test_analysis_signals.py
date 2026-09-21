@@ -5,11 +5,13 @@ import datetime
 from secondeye.analysis.classify import classify_entries
 from secondeye.analysis.signals import (
     AuthMechanismSummary,
+    CookieFlagIssue,
     CorsMisconfiguration,
     EndpointSummary,
     ParameterNameSummary,
     SecretFinding,
     compute_auth_mechanisms,
+    compute_cookie_flag_issues,
     compute_cors_misconfigurations,
     compute_distinct_endpoints,
     compute_parameter_names,
@@ -577,3 +579,65 @@ class TestCorsMisconfigurations:
         classified = classify_entries(entries)
 
         assert compute_cors_misconfigurations(classified) == []
+
+
+class TestCookieFlagIssues:
+    def test_missing_all_three_flags_reported(self) -> None:
+        entries = [
+            _entry(extra_response_headers=(HarHeader("Set-Cookie", "session_id=abc123; Path=/"),))
+        ]
+        classified = classify_entries(entries)
+
+        issues = compute_cookie_flag_issues(classified)
+
+        assert issues == [
+            CookieFlagIssue(
+                cookie_name="session_id",
+                missing_flags=("Secure", "HttpOnly", "SameSite"),
+                har_entry_index=0,
+            )
+        ]
+
+    def test_cookie_with_all_flags_not_reported(self) -> None:
+        entries = [
+            _entry(
+                extra_response_headers=(
+                    HarHeader("Set-Cookie", "session_id=abc123; Secure; HttpOnly; SameSite=Strict"),
+                )
+            )
+        ]
+        classified = classify_entries(entries)
+
+        assert compute_cookie_flag_issues(classified) == []
+
+    def test_partial_flags_reports_only_missing_ones(self) -> None:
+        entries = [
+            _entry(extra_response_headers=(HarHeader("Set-Cookie", "session_id=abc123; Secure"),))
+        ]
+        classified = classify_entries(entries)
+
+        issues = compute_cookie_flag_issues(classified)
+
+        assert issues[0].missing_flags == ("HttpOnly", "SameSite")
+
+    def test_repeated_cookie_name_reported_once_from_first_occurrence(self) -> None:
+        entries = [
+            _entry(extra_response_headers=(HarHeader("Set-Cookie", "session_id=abc; Path=/"),)),
+            _entry(extra_response_headers=(HarHeader("Set-Cookie", "session_id=xyz; Path=/"),)),
+        ]
+        classified = classify_entries(entries)
+
+        issues = compute_cookie_flag_issues(classified)
+
+        assert len(issues) == 1
+        assert issues[0].har_entry_index == 0
+
+    def test_static_assets_excluded(self) -> None:
+        entries = [
+            _static_entry(
+                extra_response_headers=(HarHeader("Set-Cookie", "session_id=abc123; Path=/"),)
+            )
+        ]
+        classified = classify_entries(entries)
+
+        assert compute_cookie_flag_issues(classified) == []

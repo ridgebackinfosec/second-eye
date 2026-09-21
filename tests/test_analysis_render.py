@@ -456,7 +456,11 @@ class TestSummarySection:
         md = _render([_xhr_entry(_at(0), "https://example.com/api/data")])
         assert "## Summary" in md
         assert "**Endpoints touched:**" in md
-        assert "- GET /api/data" in md
+        assert "- **GET** /api/data" in md
+
+    def test_endpoints_touched_state_changing_method_highlighted(self) -> None:
+        md = _render([_xhr_entry(_at(0), "https://example.com/api/data", request_body=b'{"x":1}')])
+        assert "- **POST** *(state-changing)* /api/data" in md
 
     def test_auth_mechanisms_rendered(self) -> None:
         entry = HarEntry(
@@ -497,7 +501,23 @@ class TestSummarySection:
     def test_parameter_names_rendered(self) -> None:
         md = _render([_xhr_entry(_at(0), "https://example.com/api/users?user_id=1")])
         assert "**Parameter names observed:**" in md
-        assert "user_id (query)" in md
+        assert "`user_id` (query, 1x)" in md
+
+    def test_parameter_name_with_embedded_markdown_is_escaped(self) -> None:
+        # %0A is an encoded newline; parse_qs decodes the param name to
+        # "evil\n\n## Injected". A naive renderer would let this forge a
+        # fake heading in a document operators paste verbatim into other
+        # tools (see SPEC.md's rendering-safety notes).
+        md = _render([_xhr_entry(_at(0), "https://example.com/api?evil%0A%0A%23%23%20Injected=1")])
+        assert "\n## Injected" not in md
+        assert not md.startswith("## Injected")
+        assert "`evil ## Injected` (query, 1x)" in md
+
+    def test_summary_omitted_when_only_static_asset_entries(self) -> None:
+        md = _render(
+            [_static_entry(_at(0), "https://example.com/app.js", "application/javascript")]
+        )
+        assert "## Summary" not in md
 
 
 class TestPhase1SignalsIntegration:
@@ -581,12 +601,20 @@ class TestPhase2SignalsIntegration:
         md = _render([entry, guessed_entry])
 
         assert "## Summary" in md
-        assert "- POST /api/orders" in md
+        assert "- **POST** *(state-changing)* /api/orders" in md
         assert "- Bearer token: 1 request(s)" in md
         assert "1x 403" in md
-        assert "user_id (query)" in md
-        assert "order_id (body)" in md
+        assert "`user_id` (query, 1x)" in md
+        assert "`order_id` (body, 1x)" in md
         assert "*(guessed)*" in md
         # Phase 1 features must still work unaffected by Summary's insertion:
         assert "**POST** *(state-changing)*" in md
         assert "## Contents" in md
+        # Document ordering (SPEC.md §11.9): Header -> Summary -> Capture
+        # Signals -> Contents -> Flows.
+        assert (
+            md.index("## Summary")
+            < md.index("## Capture Signals")
+            < md.index("## Contents")
+            < md.index("## Flow 1")
+        )

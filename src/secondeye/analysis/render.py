@@ -138,11 +138,11 @@ def _render_summary(classified: list[ClassifiedEntry]) -> list[str]:
     parameters = compute_parameter_names(classified)
     if not endpoints and not mechanisms and not status_rollup and not parameters:
         return []
-    lines = ["", "## Summary", ""]
+    lines = ["", "## Summary", "", "*Counts below exclude static-asset requests.*", ""]
     if endpoints:
         lines.append("**Endpoints touched:**")
         for e in endpoints:
-            lines.append(f"- {e.method} {e.path}")
+            lines.append(f"- {_method_label(e.method)} {e.path}")
         lines.append("")
     if mechanisms:
         lines.append("**Auth mechanisms observed:**")
@@ -154,7 +154,9 @@ def _render_summary(classified: list[ClassifiedEntry]) -> list[str]:
         lines.append(f"**Status codes:** {status_str}")
         lines.append("")
     if parameters:
-        names_str = ", ".join(f"{p.name} ({p.source})" for p in parameters)
+        names_str = ", ".join(
+            f"{_inline_safe(p.name)} ({p.source}, {p.occurrence_count}x)" for p in parameters
+        )
         lines.append(f"**Parameter names observed:** {names_str}")
     return lines
 
@@ -455,6 +457,31 @@ def _asset_kind(entry: HarEntry) -> str:
 def _content_type(headers: tuple[HarHeader, ...]) -> str:
     value = header_value(headers, "content-type")
     return (value or "").split(";", 1)[0].strip()
+
+
+def _inline_safe(text: str, *, max_len: int = 200) -> str:
+    """Render arbitrary target-controlled text as a safe inline markdown code span.
+
+    Collapses embedded whitespace/newlines and strips backticks (both of
+    which could otherwise let attacker-controlled capture data forge
+    markdown structure in a document meant to be pasted verbatim into an
+    AI chat — see SPEC.md's rendering-safety notes), and truncates long
+    values to keep the document skimmable.
+
+    Args:
+        text: Untrusted text observed in the capture (a header value, a
+            parameter name, etc).
+        max_len: Maximum rendered length before truncation with an ellipsis.
+
+    Returns:
+        The text, backtick-fenced, with embedded backticks replaced and
+        internal whitespace/newlines collapsed to single spaces.
+    """
+    collapsed = " ".join(text.split())
+    safe = collapsed.replace("`", "'")
+    if len(safe) > max_len:
+        safe = safe[: max_len - 1] + "…"
+    return f"`{safe}`"
 
 
 def _method_label(method: str) -> str:

@@ -49,6 +49,9 @@ _TRACKED_SECURITY_HEADERS = (
     "Content-Security-Policy",
     "X-Frame-Options",
     "X-Content-Type-Options",
+    "X-XSS-Protection",
+    "Referrer-Policy",
+    "Permissions-Policy",
 )
 _COOKIE_NAME_HINTS = {
     "jsessionid": "Java/Tomcat",

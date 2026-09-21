@@ -425,6 +425,11 @@ class TestCaptureSignalsSection:
         assert long_value not in md
         assert f"`{'x' * 200}`" in md
 
+    def test_broadened_headers_rendered(self) -> None:
+        md = _render([_xhr_entry(_at(0), "https://example.com/api/data")])
+        assert "Referrer-Policy: present on 0/1 responses" in md
+        assert "Permissions-Policy: present on 0/1 responses" in md
+
 
 class TestTableOfContents:
     def test_toc_section_present_with_correct_anchor(self) -> None:

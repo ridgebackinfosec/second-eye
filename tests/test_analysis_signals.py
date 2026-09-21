@@ -159,7 +159,7 @@ class TestSecurityHeaderPosture:
         assert hsts.present_count == 2
         assert hsts.total_count == 3
 
-    def test_tracks_all_four_headers_even_if_never_present(self) -> None:
+    def test_tracks_all_headers_even_if_never_present(self) -> None:
         classified = classify_entries([_entry()])
 
         posture = compute_security_header_posture(classified)
@@ -170,12 +170,33 @@ class TestSecurityHeaderPosture:
             "Content-Security-Policy",
             "X-Frame-Options",
             "X-Content-Type-Options",
+            "X-XSS-Protection",
+            "Referrer-Policy",
+            "Permissions-Policy",
         }
 
     def test_excludes_static_asset_entries(self) -> None:
         classified = classify_entries([_static_entry()])
 
         assert compute_security_header_posture(classified) == []
+
+    def test_broadened_headers_tracked(self) -> None:
+        classified = classify_entries([_entry()])
+
+        posture = compute_security_header_posture(classified)
+
+        names = {p.header_name for p in posture}
+        assert {"X-XSS-Protection", "Referrer-Policy", "Permissions-Policy"} <= names
+
+    def test_referrer_policy_presence_counted(self) -> None:
+        entries = [_entry(extra_response_headers=(HarHeader("Referrer-Policy", "no-referrer"),))]
+        classified = classify_entries(entries)
+
+        posture = compute_security_header_posture(classified)
+
+        rp = next(p for p in posture if p.header_name == "Referrer-Policy")
+        assert rp.present_count == 1
+        assert rp.total_count == 1
 
 
 class TestStackHints:

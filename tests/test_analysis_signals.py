@@ -6,6 +6,7 @@ from secondeye.analysis.classify import classify_entries
 from secondeye.analysis.signals import (
     compute_security_header_posture,
     compute_size_outliers,
+    compute_stack_hints,
     compute_timing_outliers,
 )
 from secondeye.capture.har import HarEntry, HarHeader, HarRequest, HarResponse
@@ -158,3 +159,51 @@ class TestSecurityHeaderPosture:
         classified = classify_entries([_static_entry()])
 
         assert compute_security_header_posture(classified) == []
+
+
+class TestStackHints:
+    def test_server_header_hint(self) -> None:
+        classified = classify_entries(
+            [_entry(extra_response_headers=(HarHeader("Server", "nginx/1.25.0"),))]
+        )
+
+        hints = compute_stack_hints(classified)
+
+        assert any(h.value == "nginx/1.25.0" and h.source == "Server header" for h in hints)
+
+    def test_x_powered_by_hint(self) -> None:
+        classified = classify_entries(
+            [_entry(extra_response_headers=(HarHeader("X-Powered-By", "Express"),))]
+        )
+
+        hints = compute_stack_hints(classified)
+
+        assert any(h.value == "Express" and h.source == "X-Powered-By header" for h in hints)
+
+    def test_known_cookie_name_hint(self) -> None:
+        classified = classify_entries(
+            [_entry(extra_response_headers=(HarHeader("Set-Cookie", "JSESSIONID=abc123; Path=/"),))]
+        )
+
+        hints = compute_stack_hints(classified)
+
+        assert any(h.value == "Java/Tomcat" and h.source == "cookie name jsessionid" for h in hints)
+
+    def test_unknown_cookie_name_produces_no_hint(self) -> None:
+        classified = classify_entries(
+            [_entry(extra_response_headers=(HarHeader("Set-Cookie", "mystery_token=xyz; Path=/"),))]
+        )
+
+        assert compute_stack_hints(classified) == []
+
+    def test_deduplicates_repeated_hints(self) -> None:
+        classified = classify_entries(
+            [
+                _entry(extra_response_headers=(HarHeader("Server", "nginx"),)),
+                _entry(extra_response_headers=(HarHeader("Server", "nginx"),)),
+            ]
+        )
+
+        hints = compute_stack_hints(classified)
+
+        assert len(hints) == 1

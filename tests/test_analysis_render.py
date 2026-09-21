@@ -294,3 +294,29 @@ class TestCaptureSignalsSection:
         )
         assert "## Capture Signals" in md
         assert "Strict-Transport-Security: present on 0/1 responses" in md
+
+    def test_stack_hints_rendered(self) -> None:
+        entry = HarEntry(
+            started_at=_at(0),
+            time_ms=1.0,
+            request=HarRequest(
+                method="GET",
+                url="https://example.com/api/data",
+                http_version="1.1",
+                headers=(HarHeader("X-Requested-With", "XMLHttpRequest"),),
+                body=b"",
+            ),
+            response=HarResponse(
+                status=200,
+                status_text="OK",
+                http_version="1.1",
+                headers=(
+                    HarHeader("Content-Type", "application/json"),
+                    HarHeader("Server", "nginx/1.25.0"),
+                ),
+                body=b'{"ok":true}',
+            ),
+        )
+        md = _render([entry])
+        assert "Stack fingerprint hints" in md
+        assert "nginx/1.25.0" in md

@@ -19,8 +19,10 @@ from secondeye.capture.har import header_value
 __all__ = [
     "OutlierInfo",
     "SecurityHeaderPosture",
+    "StackHint",
     "compute_security_header_posture",
     "compute_size_outliers",
+    "compute_stack_hints",
     "compute_timing_outliers",
 ]
 
@@ -33,6 +35,14 @@ _TRACKED_SECURITY_HEADERS = (
     "X-Frame-Options",
     "X-Content-Type-Options",
 )
+_COOKIE_NAME_HINTS = {
+    "jsessionid": "Java/Tomcat",
+    "phpsessid": "PHP",
+    "laravel_session": "Laravel",
+    "asp.net_sessionid": "ASP.NET",
+    "connect.sid": "Node.js/Express",
+    "django_sessionid": "Django",
+}
 
 
 @dataclass(frozen=True)
@@ -63,6 +73,19 @@ class SecurityHeaderPosture:
     header_name: str
     present_count: int
     total_count: int
+
+
+@dataclass(frozen=True)
+class StackHint:
+    """A guessed technology-stack signal derived from response headers/cookies.
+
+    Attributes:
+        value: The human-readable guess, e.g. "Java/Tomcat" or "nginx/1.25.0".
+        source: Where it came from, e.g. "Server header" or "cookie name jsessionid".
+    """
+
+    value: str
+    source: str
 
 
 def compute_timing_outliers(
@@ -140,6 +163,40 @@ def compute_security_header_posture(
         )
         for name in _TRACKED_SECURITY_HEADERS
     ]
+
+
+def compute_stack_hints(classified: list[ClassifiedEntry]) -> list[StackHint]:
+    """Guess backend technology from Server/X-Powered-By headers and cookie names.
+
+    Args:
+        classified: All of the capture's entries, classified.
+
+    Returns:
+        Deduplicated StackHints, in first-observed order.
+    """
+    seen: set[tuple[str, str]] = set()
+    hints: list[StackHint] = []
+    for c in classified:
+        for header_name, source_label in (
+            ("server", "Server header"),
+            ("x-powered-by", "X-Powered-By header"),
+        ):
+            value = header_value(c.entry.response.headers, header_name)
+            key = (source_label, value or "")
+            if value and key not in seen:
+                seen.add(key)
+                hints.append(StackHint(value=value, source=source_label))
+        for header in c.entry.response.headers:
+            if header.name.lower() != "set-cookie":
+                continue
+            cookie_name = header.value.split("=", 1)[0].strip().lower()
+            guess = _COOKIE_NAME_HINTS.get(cookie_name)
+            source = f"cookie name {cookie_name}"
+            key = (source, guess or "")
+            if guess and key not in seen:
+                seen.add(key)
+                hints.append(StackHint(value=guess, source=source))
+    return hints
 
 
 def _compute_outliers(

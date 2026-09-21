@@ -17,6 +17,7 @@ from secondeye.analysis.signals import (
     OutlierInfo,
     compute_security_header_posture,
     compute_size_outliers,
+    compute_stack_hints,
     compute_timing_outliers,
 )
 from secondeye.capture.har import HarEntry, HarHeader, header_value
@@ -119,11 +120,21 @@ def _render_header(
 
 def _render_capture_signals(classified: list[ClassifiedEntry]) -> list[str]:
     posture = compute_security_header_posture(classified)
-    if not posture:
+    hints = compute_stack_hints(classified)
+    if not posture and not hints:
         return []
-    lines = ["", "## Capture Signals", "", "**Security headers observed:**"]
-    for p in posture:
-        lines.append(f"- {p.header_name}: present on {p.present_count}/{p.total_count} responses")
+    lines = ["", "## Capture Signals", ""]
+    if posture:
+        lines.append("**Security headers observed:**")
+        for p in posture:
+            lines.append(
+                f"- {p.header_name}: present on {p.present_count}/{p.total_count} responses"
+            )
+        lines.append("")
+    if hints:
+        lines.append("**Stack fingerprint hints:**")
+        for hint in hints:
+            lines.append(f"- {hint.value} ({hint.source})")
     return lines
 
 

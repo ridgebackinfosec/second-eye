@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
 from secondeye.analysis.classify import Category, ClassifiedEntry
-from secondeye.capture.har import header_value
+from secondeye.capture.har import HarEntry, header_value
 
 __all__ = [
     "AuthMechanismSummary",
@@ -25,6 +25,7 @@ __all__ = [
     "CorsMisconfiguration",
     "DebugPageHint",
     "EndpointSummary",
+    "IdValueReuseNote",
     "OutlierInfo",
     "ParameterNameSummary",
     "SecretFinding",
@@ -36,6 +37,7 @@ __all__ = [
     "compute_cors_misconfigurations",
     "compute_debug_page_hints",
     "compute_distinct_endpoints",
+    "compute_id_value_reuse",
     "compute_parameter_names",
     "compute_secret_findings",
     "compute_security_header_posture",
@@ -87,6 +89,7 @@ _AUTH_SCHEME_LABELS = {
     "digest": "Digest auth",
 }
 _AUTH_KIND_ORDER = ("Bearer token", "Basic auth", "Digest auth", "session cookie")
+_LOW_SIGNAL_VALUES = frozenset({"", "0", "1", "true", "false", "null", "none"})
 
 
 @dataclass(frozen=True)
@@ -253,6 +256,110 @@ class ParameterNameSummary:
     name: str
     source: str
     occurrence_count: int
+
+
+@dataclass(frozen=True)
+class IdValueReuseNote:
+    """A parameter value observed again in a later entry after its first
+    appearance elsewhere in the capture — surfaces possible IDOR-relevant
+    value reuse (an order_id, user_id, etc. crossing request/session
+    boundaries). Rendered unredacted (SPEC.md §0's no-redaction stance).
+
+    Attributes:
+        name: The parameter name.
+        value: The exact reused value.
+        first_seen_index: raw.har index where this (name, value) pair was
+            first observed.
+        further_occurrences: How many additional entries (beyond this one)
+            also carried this exact (name, value) pair. Zero if this is
+            the only reuse.
+    """
+
+    name: str
+    value: str
+    first_seen_index: int
+    further_occurrences: int
+
+
+def _extract_id_shaped_values(entry: HarEntry) -> list[tuple[str, str]]:
+    """Extract (name, value) pairs from a request's query string and
+    top-level JSON body — the same extraction compute_parameter_names
+    uses for names, kept here with values. Low-signal values (empty,
+    "0"/"1", booleans, null) are dropped to cut pagination/flag noise.
+    """
+    pairs: list[tuple[str, str]] = []
+    query = urlsplit(entry.request.url).query
+    for name, values in parse_qs(query).items():
+        if values and values[0].lower() not in _LOW_SIGNAL_VALUES:
+            pairs.append((name, values[0]))
+
+    content_type = header_value(entry.request.headers, "content-type") or ""
+    if "json" in content_type.lower() and entry.request.body:
+        try:
+            parsed = json.loads(entry.request.body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            for name, value in parsed.items():
+                if not isinstance(value, str | int | float | bool) and value is not None:
+                    continue
+                text_value = str(value)
+                if text_value.lower() not in _LOW_SIGNAL_VALUES:
+                    pairs.append((name, text_value))
+    return pairs
+
+
+def compute_id_value_reuse(classified: list[ClassifiedEntry]) -> dict[int, IdValueReuseNote]:
+    """Flag the first later reuse of a query/JSON-body parameter's exact
+    value elsewhere in the capture (SPEC.md §11.10).
+
+    Auth/session values (cookies, Authorization headers) are excluded
+    entirely — they repeat by request design (a session cookie is sent on
+    nearly every request), so reuse-tracking them would flood every flow
+    with noise rather than surface a real finding (SPEC.md §11.10).
+    Static-asset entries are excluded, both as sources and as reuse sites.
+
+    Only the first later occurrence of a given (name, value) pair is
+    noted, on that occurrence's own entry — further repeats of the same
+    pair are folded into that note's further_occurrences count.
+
+    Args:
+        classified: All of the capture's entries, classified.
+
+    Returns:
+        {har_entry_index: IdValueReuseNote}, keyed by the entry where the
+        first later reuse occurred (not the origin entry).
+    """
+    first_seen: dict[tuple[str, str], int] = {}
+    note_entry_by_key: dict[tuple[str, str], int] = {}
+    reuse_by_index: dict[int, IdValueReuseNote] = {}
+
+    for c in classified:
+        if c.category == Category.STATIC_ASSET:
+            continue
+        for name, value in _extract_id_shaped_values(c.entry):
+            key = (name, value)
+            if key not in first_seen:
+                first_seen[key] = c.index
+                continue
+            if key not in note_entry_by_key:
+                note_entry_by_key[key] = c.index
+                reuse_by_index[c.index] = IdValueReuseNote(
+                    name=name,
+                    value=value,
+                    first_seen_index=first_seen[key],
+                    further_occurrences=0,
+                )
+            else:
+                note_index = note_entry_by_key[key]
+                existing = reuse_by_index[note_index]
+                reuse_by_index[note_index] = IdValueReuseNote(
+                    name=existing.name,
+                    value=existing.value,
+                    first_seen_index=existing.first_seen_index,
+                    further_occurrences=existing.further_occurrences + 1,
+                )
+    return reuse_by_index
 
 
 def compute_distinct_endpoints(classified: list[ClassifiedEntry]) -> list[EndpointSummary]:

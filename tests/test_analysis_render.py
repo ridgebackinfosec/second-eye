@@ -733,3 +733,19 @@ class TestPhase2SignalsIntegration:
             < md.index("## Contents")
             < md.index("## Flow 1")
         )
+
+
+class TestIdValueReuseNotes:
+    def test_reuse_note_rendered_on_second_occurrence(self) -> None:
+        md = _render(
+            [
+                _xhr_entry(_at(0), "https://example.com/api/orders?order_id=9001"),
+                _xhr_entry(_at(1), "https://example.com/api/orders/detail?order_id=9001"),
+            ]
+        )
+        assert "**Note:** parameter `order_id` value `9001` was first observed in" in md
+        assert "reused here" in md
+
+    def test_no_reuse_note_on_first_occurrence(self) -> None:
+        md = _render([_xhr_entry(_at(0), "https://example.com/api/orders?order_id=9001")])
+        assert "was first observed in" not in md

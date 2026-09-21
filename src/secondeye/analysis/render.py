@@ -15,6 +15,7 @@ from secondeye.analysis.cluster import Cluster, cluster_entries
 from secondeye.analysis.manifest import Flow
 from secondeye.analysis.signals import (
     DebugPageHint,
+    IdValueReuseNote,
     OutlierInfo,
     SecretFinding,
     compute_auth_mechanisms,
@@ -22,6 +23,7 @@ from secondeye.analysis.signals import (
     compute_cors_misconfigurations,
     compute_debug_page_hints,
     compute_distinct_endpoints,
+    compute_id_value_reuse,
     compute_parameter_names,
     compute_secret_findings,
     compute_security_header_posture,
@@ -71,6 +73,7 @@ def render_analysis_md(
     size_outliers = compute_size_outliers(classified)
     debug_page_hints = compute_debug_page_hints(classified)
     secret_findings = compute_secret_findings(classified)
+    id_value_reuse = compute_id_value_reuse(classified)
 
     narrative_flows = [f for f in flows if f.collapsed_into is None]
 
@@ -100,6 +103,7 @@ def render_analysis_md(
                 confirmed_by_index=confirmed_by_index,
                 debug_page_hints=debug_page_hints,
                 secret_findings=secret_findings,
+                id_value_reuse=id_value_reuse,
             )
         )
         lines.append("")
@@ -261,6 +265,7 @@ def _render_flow(
     confirmed_by_index: dict[int, bool],
     debug_page_hints: dict[int, DebugPageHint],
     secret_findings: dict[int, list[SecretFinding]],
+    id_value_reuse: dict[int, IdValueReuseNote],
 ) -> list[str]:
     heading_text = _flow_heading_text(flow, entry_by_index, confirmed_by_index)
     lines = [f"## {heading_text}", ""]
@@ -300,6 +305,11 @@ def _render_flow(
     if secret_note is not None:
         lines.append("")
         lines.append(secret_note)
+
+    reuse_note = _render_id_reuse_note(flow, id_value_reuse)
+    if reuse_note is not None:
+        lines.append("")
+        lines.append(reuse_note)
 
     lines.append("")
     lines.append(f"*(har_entry_index: {flow.har_entry_indices[0]})*")
@@ -480,6 +490,19 @@ def _render_secret_findings_note(
         return None
     parts = [f"{f.kind} `{f.value}`" for f in findings]
     return f"**Warning:** possible secret(s) in response body — {', '.join(parts)}."
+
+
+def _render_id_reuse_note(flow: Flow, id_value_reuse: dict[int, IdValueReuseNote]) -> str | None:
+    note = id_value_reuse.get(flow.har_entry_indices[0])
+    if note is None:
+        return None
+    text = (
+        f"**Note:** parameter {_inline_safe(note.name)} value {_inline_safe(note.value)} "
+        f"was first observed in raw.har entry #{note.first_seen_index}, reused here."
+    )
+    if note.further_occurrences:
+        text += f" ...and {note.further_occurrences} more occurrence(s)."
+    return text
 
 
 def _render_assets_summary(cluster: Cluster) -> str | None:

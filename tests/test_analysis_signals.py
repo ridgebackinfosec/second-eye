@@ -8,12 +8,14 @@ from secondeye.analysis.signals import (
     CookieFlagIssue,
     CorsMisconfiguration,
     EndpointSummary,
+    IdValueReuseNote,
     ParameterNameSummary,
     SecretFinding,
     compute_auth_mechanisms,
     compute_cookie_flag_issues,
     compute_cors_misconfigurations,
     compute_distinct_endpoints,
+    compute_id_value_reuse,
     compute_parameter_names,
     compute_secret_findings,
     compute_security_header_posture,
@@ -64,13 +66,12 @@ def _static_entry(
     time_ms: float = 100.0,
     body: bytes = b"x",
     extra_response_headers: tuple[HarHeader, ...] = (),
+    url: str = "https://example.com/app.js",
 ) -> HarEntry:
     return HarEntry(
         started_at=_T0,
         time_ms=time_ms,
-        request=HarRequest(
-            method="GET", url="https://example.com/app.js", http_version="1.1", headers=(), body=b""
-        ),
+        request=HarRequest(method="GET", url=url, http_version="1.1", headers=(), body=b""),
         response=HarResponse(
             status=200,
             status_text="OK",
@@ -641,3 +642,88 @@ class TestCookieFlagIssues:
         classified = classify_entries(entries)
 
         assert compute_cookie_flag_issues(classified) == []
+
+
+class TestIdValueReuse:
+    def test_query_value_reused_in_later_entry(self) -> None:
+        entries = [
+            _entry(url="https://example.com/api/orders?order_id=9001"),
+            _entry(url="https://example.com/api/orders/detail?order_id=9001"),
+        ]
+        classified = classify_entries(entries)
+
+        reuse = compute_id_value_reuse(classified)
+
+        assert reuse == {
+            1: IdValueReuseNote(
+                name="order_id", value="9001", first_seen_index=0, further_occurrences=0
+            )
+        }
+
+    def test_body_value_reused_across_entries(self) -> None:
+        entries = [
+            _entry(
+                method="POST",
+                request_headers=(HarHeader("Content-Type", "application/json"),),
+                request_body=b'{"user_id": "42"}',
+            ),
+            _entry(
+                method="POST",
+                request_headers=(HarHeader("Content-Type", "application/json"),),
+                request_body=b'{"user_id": "42"}',
+            ),
+        ]
+        classified = classify_entries(entries)
+
+        reuse = compute_id_value_reuse(classified)
+
+        assert reuse[1].name == "user_id"
+        assert reuse[1].value == "42"
+        assert reuse[1].first_seen_index == 0
+
+    def test_third_occurrence_bumps_further_occurrences_not_a_new_note(self) -> None:
+        entries = [
+            _entry(url="https://example.com/api/a?order_id=9001"),
+            _entry(url="https://example.com/api/b?order_id=9001"),
+            _entry(url="https://example.com/api/c?order_id=9001"),
+        ]
+        classified = classify_entries(entries)
+
+        reuse = compute_id_value_reuse(classified)
+
+        assert set(reuse) == {1}
+        assert reuse[1].further_occurrences == 1
+
+    def test_low_signal_values_excluded(self) -> None:
+        entries = [
+            _entry(url="https://example.com/api/a?page=1"),
+            _entry(url="https://example.com/api/b?page=1"),
+        ]
+        classified = classify_entries(entries)
+
+        assert compute_id_value_reuse(classified) == {}
+
+    def test_auth_and_cookie_headers_never_tracked(self) -> None:
+        entries = [
+            _entry(request_headers=(HarHeader("Authorization", "Bearer sometoken123"),)),
+            _entry(request_headers=(HarHeader("Authorization", "Bearer sometoken123"),)),
+            _entry(request_headers=(HarHeader("Cookie", "session=sometoken123"),)),
+        ]
+        classified = classify_entries(entries)
+
+        assert compute_id_value_reuse(classified) == {}
+
+    def test_first_occurrence_alone_produces_no_note(self) -> None:
+        entries = [_entry(url="https://example.com/api/a?order_id=9001")]
+        classified = classify_entries(entries)
+
+        assert compute_id_value_reuse(classified) == {}
+
+    def test_static_assets_excluded(self) -> None:
+        entries = [
+            _static_entry(url="https://example.com/app.js?order_id=9001"),
+            _static_entry(url="https://example.com/app.js?order_id=9001"),
+        ]
+        classified = classify_entries(entries)
+
+        assert compute_id_value_reuse(classified) == {}

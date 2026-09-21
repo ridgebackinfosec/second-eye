@@ -43,7 +43,13 @@ the active capture (`CaptureManager.active_request_count`); `secondeye ca
 status` (read-only — never generates a CA as a side effect, unlike every
 other CA-touching command); and a first-run CA-creation note, both on `ca
 export` (stderr only — stdout carries the raw cert bytes) and in the
-`proxy start` banner (`Daemon.ca_was_created`).
+`proxy start` banner (`Daemon.ca_was_created`). ANALYSIS.md derived-signals
+batch (v0.5.0): cheap, no-cross-entry-correlation additions to
+`analysis/render.py` — timing/size outlier notes on individual flows;
+security-header posture and stack fingerprint hints surfaced in a new
+`## Capture Signals` section; a `## Contents` table of contents linking to
+every narrative flow; and state-changing (`POST`/`PUT`/`DELETE`/`PATCH`)
+method highlighting everywhere a method is shown.
 
 ## Commands
 

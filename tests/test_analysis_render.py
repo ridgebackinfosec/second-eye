@@ -356,3 +356,36 @@ class TestStateChangingMethodHighlighting:
         md = _render([_xhr_entry(_at(0), "https://example.com/api/data")])
         assert "**GET**" in md
         assert "*(state-changing)*" not in md
+
+
+class TestPhase1SignalsIntegration:
+    def test_all_phase1_signals_present_together(self) -> None:
+        slow_entry = HarEntry(
+            started_at=_at(0),
+            time_ms=5000.0,
+            request=HarRequest(
+                method="POST",
+                url="https://example.com/api/create",
+                http_version="1.1",
+                headers=(HarHeader("X-Requested-With", "XMLHttpRequest"),),
+                body=b'{"x":1}',
+            ),
+            response=HarResponse(
+                status=200,
+                status_text="OK",
+                http_version="1.1",
+                headers=(
+                    HarHeader("Content-Type", "application/json"),
+                    HarHeader("Server", "nginx"),
+                ),
+                body=b'{"ok":true}',
+            ),
+        )
+        baseline = [_xhr_entry(_at(i + 1), f"https://example.com/api/{i}") for i in range(4)]
+        md = _render([slow_entry, *baseline])
+
+        assert "## Capture Signals" in md
+        assert "Stack fingerprint hints" in md
+        assert "## Contents" in md
+        assert "**POST** *(state-changing)*" in md
+        assert "response time 5000ms" in md

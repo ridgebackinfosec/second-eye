@@ -24,3 +24,6 @@ htmlcov/
 
 # Internal spec doc, not part of the published repo
 SPEC.md
+
+# Local agentic-planning artifacts, not part of the published repo
+docs/superpowers/

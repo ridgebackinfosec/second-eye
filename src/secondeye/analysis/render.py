@@ -13,6 +13,7 @@ import json
 from secondeye.analysis.classify import Category, ClassifiedEntry
 from secondeye.analysis.cluster import Cluster, cluster_entries
 from secondeye.analysis.manifest import Flow
+from secondeye.analysis.signals import OutlierInfo, compute_size_outliers, compute_timing_outliers
 from secondeye.capture.har import HarEntry, HarHeader, header_value
 
 __all__ = ["render_analysis_md"]
@@ -48,6 +49,8 @@ def render_analysis_md(
     entry_by_index = {c.index: c.entry for c in classified}
     clusters = cluster_entries(classified)
     cluster_by_anchor_index = {c.anchor.index: c for c in clusters}
+    timing_outliers = compute_timing_outliers(classified)
+    size_outliers = compute_size_outliers(classified)
 
     narrative_flows = [f for f in flows if f.collapsed_into is None]
 
@@ -64,7 +67,11 @@ def render_analysis_md(
 
     for flow in narrative_flows:
         lines.append("")
-        lines.extend(_render_flow(flow, entry_by_index, cluster_by_anchor_index))
+        lines.extend(
+            _render_flow(
+                flow, entry_by_index, cluster_by_anchor_index, timing_outliers, size_outliers
+            )
+        )
         lines.append("")
         lines.append("---")
 
@@ -108,6 +115,8 @@ def _render_flow(
     flow: Flow,
     entry_by_index: dict[int, HarEntry],
     cluster_by_anchor_index: dict[int, Cluster],
+    timing_outliers: dict[int, OutlierInfo],
+    size_outliers: dict[int, OutlierInfo],
 ) -> list[str]:
     time_str = flow.started_at.strftime("%H:%M:%S")
     header_suffix = flow.category.value
@@ -141,6 +150,11 @@ def _render_flow(
     if flow.polling_group is not None:
         lines.append("")
         lines.extend(_render_polling_note(flow, entry_by_index))
+
+    outlier_note = _render_outlier_note(flow, timing_outliers, size_outliers)
+    if outlier_note is not None:
+        lines.append("")
+        lines.append(outlier_note)
 
     lines.append("")
     lines.append(f"*(har_entry_index: {flow.har_entry_indices[0]})*")
@@ -277,6 +291,28 @@ def _render_polling_note(flow: Flow, entry_by_index: dict[int, HarEntry]) -> lis
     if len(collapsed) > 3:
         note += f" ...and {len(collapsed) - 3} more occurrences through end of capture."
     return [note]
+
+
+def _render_outlier_note(
+    flow: Flow, timing_outliers: dict[int, OutlierInfo], size_outliers: dict[int, OutlierInfo]
+) -> str | None:
+    primary_index = flow.har_entry_indices[0]
+    notes: list[str] = []
+    timing = timing_outliers.get(primary_index)
+    if timing is not None:
+        notes.append(
+            f"response time {round(timing.value)}ms — ~{timing.multiple:g}x the capture's "
+            f"median ({round(timing.median)}ms)"
+        )
+    size = size_outliers.get(primary_index)
+    if size is not None:
+        notes.append(
+            f"response body {_format_bytes(int(size.value))} — ~{size.multiple:g}x the "
+            f"capture's median ({_format_bytes(int(size.median))})"
+        )
+    if not notes:
+        return None
+    return f"**Note:** {'; '.join(notes)}."
 
 
 def _render_assets_summary(cluster: Cluster) -> str | None:

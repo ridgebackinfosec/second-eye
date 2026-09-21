@@ -263,3 +263,25 @@ class TestFlowOrderingAndFooter:
         entries = [_nav_entry(_at(0), "https://example.com/login")]
         md = _render(entries)
         assert "1 total request" in md
+
+
+class TestOutlierNotes:
+    def test_slow_response_gets_timing_note(self) -> None:
+        entries = [_xhr_entry(_at(i), f"https://example.com/api/{i}") for i in range(5)]
+        entries[2] = _xhr_entry(_at(2), "https://example.com/api/2")
+        # override time_ms on the slow one by rebuilding it directly
+        slow = entries[2]
+        entries[2] = HarEntry(
+            started_at=slow.started_at,
+            time_ms=5000.0,
+            request=slow.request,
+            response=slow.response,
+        )
+        md = _render(entries)
+        assert "response time 5000ms" in md
+        assert "median" in md
+
+    def test_no_note_when_timing_unremarkable(self) -> None:
+        entries = [_xhr_entry(_at(i), f"https://example.com/api/{i}") for i in range(5)]
+        md = _render(entries)
+        assert "response time" not in md

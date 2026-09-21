@@ -16,10 +16,12 @@ from secondeye.analysis.manifest import Flow
 from secondeye.analysis.signals import (
     DebugPageHint,
     OutlierInfo,
+    SecretFinding,
     compute_auth_mechanisms,
     compute_debug_page_hints,
     compute_distinct_endpoints,
     compute_parameter_names,
+    compute_secret_findings,
     compute_security_header_posture,
     compute_size_outliers,
     compute_stack_hints,
@@ -66,6 +68,7 @@ def render_analysis_md(
     timing_outliers = compute_timing_outliers(classified)
     size_outliers = compute_size_outliers(classified)
     debug_page_hints = compute_debug_page_hints(classified)
+    secret_findings = compute_secret_findings(classified)
 
     narrative_flows = [f for f in flows if f.collapsed_into is None]
 
@@ -94,6 +97,7 @@ def render_analysis_md(
                 size_outliers=size_outliers,
                 confirmed_by_index=confirmed_by_index,
                 debug_page_hints=debug_page_hints,
+                secret_findings=secret_findings,
             )
         )
         lines.append("")
@@ -235,6 +239,7 @@ def _render_flow(
     size_outliers: dict[int, OutlierInfo],
     confirmed_by_index: dict[int, bool],
     debug_page_hints: dict[int, DebugPageHint],
+    secret_findings: dict[int, list[SecretFinding]],
 ) -> list[str]:
     heading_text = _flow_heading_text(flow, entry_by_index, confirmed_by_index)
     lines = [f"## {heading_text}", ""]
@@ -269,6 +274,11 @@ def _render_flow(
     if debug_note is not None:
         lines.append("")
         lines.append(debug_note)
+
+    secret_note = _render_secret_findings_note(flow, secret_findings)
+    if secret_note is not None:
+        lines.append("")
+        lines.append(secret_note)
 
     lines.append("")
     lines.append(f"*(har_entry_index: {flow.har_entry_indices[0]})*")
@@ -439,6 +449,16 @@ def _render_debug_page_note(flow: Flow, debug_page_hints: dict[int, DebugPageHin
         f"**Warning:** response body matches a known {hint.framework} debug/error page "
         f"fingerprint (`{hint.signature}`)."
     )
+
+
+def _render_secret_findings_note(
+    flow: Flow, secret_findings: dict[int, list[SecretFinding]]
+) -> str | None:
+    findings = secret_findings.get(flow.har_entry_indices[0])
+    if not findings:
+        return None
+    parts = [f"{f.kind} `{f.value}`" for f in findings]
+    return f"**Warning:** possible secret(s) in response body — {', '.join(parts)}."
 
 
 def _render_assets_summary(cluster: Cluster) -> str | None:

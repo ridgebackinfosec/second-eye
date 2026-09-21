@@ -10,6 +10,7 @@ that compute lives here and rendering lives in render.py (CLAUDE.md).
 from __future__ import annotations
 
 import json
+import re
 import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ __all__ = [
     "EndpointSummary",
     "OutlierInfo",
     "ParameterNameSummary",
+    "SecretFinding",
     "SecurityHeaderPosture",
     "StackHint",
     "StatusCodeSummary",
@@ -31,6 +33,7 @@ __all__ = [
     "compute_debug_page_hints",
     "compute_distinct_endpoints",
     "compute_parameter_names",
+    "compute_secret_findings",
     "compute_security_header_posture",
     "compute_size_outliers",
     "compute_stack_hints",
@@ -65,6 +68,11 @@ _DEBUG_PAGE_SIGNATURES = (
     ("ASP.NET", "Server Error in '/' Application"),
     ("ASP.NET", "Stack Trace:"),
     ("PHP", "Fatal error:"),
+)
+_SECRET_PATTERNS = (
+    ("AWS access key", re.compile(r"AKIA[0-9A-Z]{16}")),
+    ("PEM private key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----")),
+    ("JWT", re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")),
 )
 _AUTH_SCHEME_LABELS = {
     "bearer": "Bearer token",
@@ -130,6 +138,28 @@ class DebugPageHint:
 
     framework: str
     signature: str
+
+
+@dataclass(frozen=True)
+class SecretFinding:
+    """A credential-shaped pattern matched in a response body.
+
+    Rendered unredacted (SPEC.md §0's full-fidelity-capture, no-redaction
+    stance) — this tool records traffic for an authorized security
+    assessment, and withholding an actually-observed secret from the
+    operator would defeat the tool's purpose.
+
+    Attributes:
+        kind: The pattern's label, e.g. "AWS access key".
+        value: The exact matched substring. Every _SECRET_PATTERNS regex
+            uses a charset that excludes markdown-significant characters
+            (backticks, newlines) by construction, so this value is safe
+            to render without going through render.py's _inline_safe() —
+            unlike a freely-typed query parameter name/value.
+    """
+
+    kind: str
+    value: str
 
 
 @dataclass(frozen=True)
@@ -465,6 +495,39 @@ def compute_debug_page_hints(classified: list[ClassifiedEntry]) -> dict[int, Deb
                 hints[c.index] = DebugPageHint(framework=framework, signature=signature)
                 break
     return hints
+
+
+def compute_secret_findings(classified: list[ClassifiedEntry]) -> dict[int, list[SecretFinding]]:
+    """Scan response bodies for credential-shaped patterns (SPEC.md §11.10).
+
+    Response bodies only — request-side credentials are already covered
+    by compute_auth_mechanisms, which deliberately never surfaces the
+    value; this function does, for values a *target application* exposed
+    in its own response, which is the actual finding an operator needs to
+    see. Static-asset entries are excluded.
+
+    Args:
+        classified: All of the capture's entries, classified.
+
+    Returns:
+        {har_entry_index: [SecretFinding, ...]}, only for entries with at
+        least one match. A body can match more than one pattern.
+    """
+    findings: dict[int, list[SecretFinding]] = {}
+    for c in classified:
+        if c.category == Category.STATIC_ASSET:
+            continue
+        if not c.entry.response.body:
+            continue
+        body_text = _decode_for_scan(c.entry.response.body)
+        matches: list[SecretFinding] = []
+        for kind, pattern in _SECRET_PATTERNS:
+            match = pattern.search(body_text)
+            if match:
+                matches.append(SecretFinding(kind=kind, value=match.group(0)))
+        if matches:
+            findings[c.index] = matches
+    return findings
 
 
 def _compute_outliers(

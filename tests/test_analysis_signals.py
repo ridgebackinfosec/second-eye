@@ -7,9 +7,11 @@ from secondeye.analysis.signals import (
     AuthMechanismSummary,
     EndpointSummary,
     ParameterNameSummary,
+    SecretFinding,
     compute_auth_mechanisms,
     compute_distinct_endpoints,
     compute_parameter_names,
+    compute_secret_findings,
     compute_security_header_posture,
     compute_size_outliers,
     compute_stack_hints,
@@ -18,6 +20,10 @@ from secondeye.analysis.signals import (
 from secondeye.capture.har import HarEntry, HarHeader, HarRequest, HarResponse
 
 _T0 = datetime.datetime(2026, 9, 15, 14, 2, 0, tzinfo=datetime.UTC)
+
+_EXAMPLE_JWT = (
+    b"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+)
 
 
 def _entry(
@@ -449,3 +455,49 @@ class TestDebugPageHints:
         classified = classify_entries(entries)
 
         assert compute_debug_page_hints(classified) == {}
+
+
+class TestSecretFindings:
+    def test_aws_access_key_detected(self) -> None:
+        entries = [_entry(body=b"config: AKIAABCDEFGHIJKLMNOP")]
+        classified = classify_entries(entries)
+
+        findings = compute_secret_findings(classified)
+
+        assert findings == {0: [SecretFinding(kind="AWS access key", value="AKIAABCDEFGHIJKLMNOP")]}
+
+    def test_pem_private_key_detected(self) -> None:
+        entries = [_entry(body=b"-----BEGIN RSA PRIVATE KEY-----\nMIIB...")]
+        classified = classify_entries(entries)
+
+        findings = compute_secret_findings(classified)
+
+        assert findings[0][0].kind == "PEM private key"
+
+    def test_jwt_detected(self) -> None:
+        entries = [_entry(body=b'{"token": "' + _EXAMPLE_JWT + b'"}')]
+        classified = classify_entries(entries)
+
+        findings = compute_secret_findings(classified)
+
+        assert findings[0][0] == SecretFinding(kind="JWT", value=_EXAMPLE_JWT.decode())
+
+    def test_multiple_patterns_in_one_body(self) -> None:
+        entries = [_entry(body=b"AKIAABCDEFGHIJKLMNOP and " + _EXAMPLE_JWT)]
+        classified = classify_entries(entries)
+
+        findings = compute_secret_findings(classified)
+
+        assert {f.kind for f in findings[0]} == {"AWS access key", "JWT"}
+
+    def test_ordinary_response_produces_no_findings(self) -> None:
+        entries = [_entry(body=b'{"ok": true}')]
+        classified = classify_entries(entries)
+
+        assert compute_secret_findings(classified) == {}
+
+    def test_static_assets_excluded(self) -> None:
+        entries = [_static_entry(body=b"AKIAABCDEFGHIJKLMNOP")]
+        classified = classify_entries(entries)
+
+        assert compute_secret_findings(classified) == {}

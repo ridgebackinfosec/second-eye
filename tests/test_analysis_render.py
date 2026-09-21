@@ -160,6 +160,35 @@ class TestDebugPageNotes:
         assert "debug/error page" not in md
 
 
+class TestSecretFindingNotes:
+    def test_secret_finding_note_rendered(self) -> None:
+        entry = HarEntry(
+            started_at=_at(0),
+            time_ms=1.0,
+            request=HarRequest(
+                method="GET",
+                url="https://example.com/config",
+                http_version="1.1",
+                headers=(),
+                body=b"",
+            ),
+            response=HarResponse(
+                status=200,
+                status_text="OK",
+                http_version="1.1",
+                headers=(HarHeader("Content-Type", "text/plain"),),
+                body=b"aws_key=AKIAABCDEFGHIJKLMNOP",
+            ),
+        )
+        md = _render([entry])
+        assert "**Warning:** possible secret(s) in response body" in md
+        assert "AWS access key `AKIAABCDEFGHIJKLMNOP`" in md
+
+    def test_no_secret_note_for_ordinary_response(self) -> None:
+        md = _render([_xhr_entry(_at(0), "https://example.com/api/data")])
+        assert "possible secret" not in md
+
+
 class TestNavigationRendering:
     def test_short_body_rendered_inline_without_truncation_marker(self) -> None:
         md = _render([_nav_entry(_at(0), "https://example.com/login", body=b"<html>short</html>")])

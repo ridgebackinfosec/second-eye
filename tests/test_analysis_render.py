@@ -531,3 +531,62 @@ class TestPhase1SignalsIntegration:
         assert "## Contents" in md
         assert "**POST** *(state-changing)*" in md
         assert "response time 5000ms" in md
+
+
+class TestPhase2SignalsIntegration:
+    def test_all_phase2_signals_present_together_and_phase1_still_works(self) -> None:
+        entry = HarEntry(
+            started_at=_at(0),
+            time_ms=1.0,
+            request=HarRequest(
+                method="POST",
+                url="https://example.com/api/orders?user_id=7",
+                http_version="1.1",
+                headers=(
+                    HarHeader("X-Requested-With", "XMLHttpRequest"),
+                    HarHeader("Sec-Fetch-Mode", "cors"),
+                    HarHeader("Authorization", "Bearer abc123"),
+                    HarHeader("Content-Type", "application/json"),
+                ),
+                body=b'{"order_id": 42}',
+            ),
+            response=HarResponse(
+                status=403,
+                status_text="Forbidden",
+                http_version="1.1",
+                headers=(HarHeader("Content-Type", "application/json"),),
+                body=b'{"error":"forbidden"}',
+            ),
+        )
+        # Unconfirmed classification (no Sec-Fetch-Mode header), to exercise
+        # the "(guessed)" marker alongside everything else.
+        guessed_entry = HarEntry(
+            started_at=_at(1),
+            time_ms=1.0,
+            request=HarRequest(
+                method="GET",
+                url="https://example.com/legacy",
+                http_version="1.1",
+                headers=(),
+                body=b"",
+            ),
+            response=HarResponse(
+                status=200,
+                status_text="OK",
+                http_version="1.1",
+                headers=(HarHeader("Content-Type", "text/html"),),
+                body=b"<html></html>",
+            ),
+        )
+        md = _render([entry, guessed_entry])
+
+        assert "## Summary" in md
+        assert "- POST /api/orders" in md
+        assert "- Bearer token: 1 request(s)" in md
+        assert "1x 403" in md
+        assert "user_id (query)" in md
+        assert "order_id (body)" in md
+        assert "*(guessed)*" in md
+        # Phase 1 features must still work unaffected by Summary's insertion:
+        assert "**POST** *(state-changing)*" in md
+        assert "## Contents" in md

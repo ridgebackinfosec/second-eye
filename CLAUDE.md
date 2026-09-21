@@ -49,7 +49,15 @@ batch (v0.5.0): cheap, no-cross-entry-correlation additions to
 security-header posture and stack fingerprint hints surfaced in a new
 `## Capture Signals` section; a `## Contents` table of contents linking to
 every narrative flow; and state-changing (`POST`/`PUT`/`DELETE`/`PATCH`)
-method highlighting everywhere a method is shown.
+method highlighting everywhere a method is shown. ANALYSIS.md Phase 2
+orientation block (v0.6.0): a classification-confidence marker
+(`classify_entries()`'s new `confirmed` field on `ClassifiedEntry`, surfaced
+as a `*(guessed)*` heading marker on flows built from unconfirmed entries);
+and a new `## Summary` section with four independently-omittable sub-parts —
+endpoints touched, auth mechanisms observed, a status-code rollup, and
+parameter names observed (query-string and JSON-body top-level keys only,
+never values, for spotting IDOR-candidate parameters like `user_id` at a
+glance).
 
 ## Commands
 

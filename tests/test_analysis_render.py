@@ -254,9 +254,15 @@ class TestFlowOrderingAndFooter:
             _other_entry(_at(2), "https://example.com/mid"),
         ]
         md = _render(entries)
-        pos_login = md.index("/login")
-        pos_mid = md.index("/mid")
-        pos_late = md.index("/late")
+        # Search from the first flow heading onward — the new "## Summary"
+        # section (added in Phase 2) also lists these URLs, but in
+        # first-seen/classified order rather than chronological order, so
+        # anchoring before it would pick up its ordering instead of the
+        # flow sections' actual chronological rendering.
+        flows_start = md.index("## Flow 1")
+        pos_login = md.index("/login", flows_start)
+        pos_mid = md.index("/mid", flows_start)
+        pos_late = md.index("/late", flows_start)
         assert pos_login < pos_mid < pos_late
 
     def test_footer_mentions_total_request_count(self) -> None:
@@ -443,6 +449,14 @@ class TestClassificationConfidenceMarker:
     def test_no_marker_on_confirmed_flow(self) -> None:
         md = _render([_nav_entry(_at(0), "https://example.com/login")])
         assert "*(guessed)*" not in md
+
+
+class TestSummarySection:
+    def test_endpoints_touched_rendered(self) -> None:
+        md = _render([_xhr_entry(_at(0), "https://example.com/api/data")])
+        assert "## Summary" in md
+        assert "**Endpoints touched:**" in md
+        assert "- GET /api/data" in md
 
 
 class TestPhase1SignalsIntegration:

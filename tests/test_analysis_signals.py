@@ -4,6 +4,8 @@ import datetime
 
 from secondeye.analysis.classify import classify_entries
 from secondeye.analysis.signals import (
+    EndpointSummary,
+    compute_distinct_endpoints,
     compute_security_header_posture,
     compute_size_outliers,
     compute_stack_hints,
@@ -18,19 +20,24 @@ def _entry(
     time_ms: float = 100.0,
     body: bytes = b"ok",
     extra_response_headers: tuple[HarHeader, ...] = (),
+    method: str = "GET",
+    url: str = "https://example.com/api/data",
+    request_headers: tuple[HarHeader, ...] = (HarHeader("X-Requested-With", "XMLHttpRequest"),),
+    request_body: bytes = b"",
+    status: int = 200,
 ) -> HarEntry:
     return HarEntry(
         started_at=_T0,
         time_ms=time_ms,
         request=HarRequest(
-            method="GET",
-            url="https://example.com/api/data",
+            method=method,
+            url=url,
             http_version="1.1",
-            headers=(HarHeader("X-Requested-With", "XMLHttpRequest"),),
-            body=b"",
+            headers=request_headers,
+            body=request_body,
         ),
         response=HarResponse(
-            status=200,
+            status=status,
             status_text="OK",
             http_version="1.1",
             headers=(HarHeader("Content-Type", "application/json"), *extra_response_headers),
@@ -207,3 +214,35 @@ class TestStackHints:
         hints = compute_stack_hints(classified)
 
         assert len(hints) == 1
+
+
+class TestDistinctEndpoints:
+    def test_dedupes_same_method_and_path_ignoring_query(self) -> None:
+        entries = [
+            _entry(method="GET", url="https://example.com/api/users?page=1"),
+            _entry(method="GET", url="https://example.com/api/users?page=2"),
+        ]
+        classified = classify_entries(entries)
+
+        endpoints = compute_distinct_endpoints(classified)
+
+        assert endpoints == [EndpointSummary(method="GET", path="/api/users")]
+
+    def test_distinct_methods_on_same_path_are_separate(self) -> None:
+        entries = [
+            _entry(method="GET", url="https://example.com/api/users"),
+            _entry(method="POST", url="https://example.com/api/users", request_body=b'{"x":1}'),
+        ]
+        classified = classify_entries(entries)
+
+        endpoints = compute_distinct_endpoints(classified)
+
+        assert endpoints == [
+            EndpointSummary(method="GET", path="/api/users"),
+            EndpointSummary(method="POST", path="/api/users"),
+        ]
+
+    def test_static_assets_excluded(self) -> None:
+        classified = classify_entries([_static_entry()])
+
+        assert compute_distinct_endpoints(classified) == []

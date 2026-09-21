@@ -12,14 +12,17 @@ from __future__ import annotations
 import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from secondeye.analysis.classify import Category, ClassifiedEntry
 from secondeye.capture.har import header_value
 
 __all__ = [
+    "EndpointSummary",
     "OutlierInfo",
     "SecurityHeaderPosture",
     "StackHint",
+    "compute_distinct_endpoints",
     "compute_security_header_posture",
     "compute_size_outliers",
     "compute_stack_hints",
@@ -86,6 +89,44 @@ class StackHint:
 
     value: str
     source: str
+
+
+@dataclass(frozen=True)
+class EndpointSummary:
+    """A distinct (method, path) pair observed in the capture.
+
+    Attributes:
+        method: The HTTP method, e.g. "GET".
+        path: The URL path only — no query string, scheme, or host.
+    """
+
+    method: str
+    path: str
+
+
+def compute_distinct_endpoints(classified: list[ClassifiedEntry]) -> list[EndpointSummary]:
+    """Aggregate distinct (method, path) pairs touched during the capture.
+
+    Static-asset entries are excluded (SPEC.md §11.9) — endpoint mapping
+    is about application surface, not asset requests.
+
+    Args:
+        classified: All of the capture's entries, classified.
+
+    Returns:
+        Deduplicated EndpointSummary entries, first-seen order.
+    """
+    seen: set[tuple[str, str]] = set()
+    endpoints: list[EndpointSummary] = []
+    for c in classified:
+        if c.category == Category.STATIC_ASSET:
+            continue
+        path = urlsplit(c.entry.request.url).path
+        key = (c.entry.request.method, path)
+        if key not in seen:
+            seen.add(key)
+            endpoints.append(EndpointSummary(method=c.entry.request.method, path=path))
+    return endpoints
 
 
 def compute_timing_outliers(

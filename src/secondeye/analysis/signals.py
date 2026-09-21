@@ -21,6 +21,7 @@ from secondeye.capture.har import header_value
 
 __all__ = [
     "AuthMechanismSummary",
+    "CorsMisconfiguration",
     "DebugPageHint",
     "EndpointSummary",
     "OutlierInfo",
@@ -30,6 +31,7 @@ __all__ = [
     "StackHint",
     "StatusCodeSummary",
     "compute_auth_mechanisms",
+    "compute_cors_misconfigurations",
     "compute_debug_page_hints",
     "compute_distinct_endpoints",
     "compute_parameter_names",
@@ -126,6 +128,20 @@ class StackHint:
 
     value: str
     source: str
+
+
+@dataclass(frozen=True)
+class CorsMisconfiguration:
+    """A response pairing a wildcard CORS origin with credentialed access.
+
+    Attributes:
+        har_entry_index: The flagged response's raw.har entry index.
+        allow_origin: The Access-Control-Allow-Origin header's value
+            (always "*" — that's the condition that triggers this finding).
+    """
+
+    har_entry_index: int
+    allow_origin: str
 
 
 @dataclass(frozen=True)
@@ -422,6 +438,40 @@ def compute_security_header_posture(
         )
         for name in _TRACKED_SECURITY_HEADERS
     ]
+
+
+def compute_cors_misconfigurations(
+    classified: list[ClassifiedEntry],
+) -> list[CorsMisconfiguration]:
+    """Flag responses combining a wildcard CORS origin with credentialed
+    access (SPEC.md §11.10).
+
+    Access-Control-Allow-Origin: * paired with
+    Access-Control-Allow-Credentials: true is a real misconfiguration
+    (most browsers reject serving credentialed requests with a wildcard
+    origin, but a backend sending both together is still a signal worth
+    surfacing — either a bug, or a browser-specific bypass).
+
+    Args:
+        classified: All of the capture's entries, classified.
+
+    Returns:
+        One CorsMisconfiguration per flagged entry, in raw.har order.
+        Static-asset entries are excluded.
+    """
+    findings: list[CorsMisconfiguration] = []
+    for c in classified:
+        if c.category == Category.STATIC_ASSET:
+            continue
+        allow_origin = header_value(c.entry.response.headers, "access-control-allow-origin")
+        allow_credentials = header_value(
+            c.entry.response.headers, "access-control-allow-credentials"
+        )
+        if allow_origin == "*" and (allow_credentials or "").strip().lower() == "true":
+            findings.append(
+                CorsMisconfiguration(har_entry_index=c.index, allow_origin=allow_origin)
+            )
+    return findings
 
 
 def compute_stack_hints(classified: list[ClassifiedEntry]) -> list[StackHint]:

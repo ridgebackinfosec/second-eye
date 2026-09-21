@@ -5,10 +5,12 @@ import datetime
 from secondeye.analysis.classify import classify_entries
 from secondeye.analysis.signals import (
     AuthMechanismSummary,
+    CorsMisconfiguration,
     EndpointSummary,
     ParameterNameSummary,
     SecretFinding,
     compute_auth_mechanisms,
+    compute_cors_misconfigurations,
     compute_distinct_endpoints,
     compute_parameter_names,
     compute_secret_findings,
@@ -56,7 +58,11 @@ def _entry(
     )
 
 
-def _static_entry(time_ms: float = 100.0, body: bytes = b"x") -> HarEntry:
+def _static_entry(
+    time_ms: float = 100.0,
+    body: bytes = b"x",
+    extra_response_headers: tuple[HarHeader, ...] = (),
+) -> HarEntry:
     return HarEntry(
         started_at=_T0,
         time_ms=time_ms,
@@ -67,7 +73,7 @@ def _static_entry(time_ms: float = 100.0, body: bytes = b"x") -> HarEntry:
             status=200,
             status_text="OK",
             http_version="1.1",
-            headers=(HarHeader("Content-Type", "application/javascript"),),
+            headers=(HarHeader("Content-Type", "application/javascript"), *extra_response_headers),
             body=body,
         ),
     )
@@ -522,3 +528,52 @@ class TestSecretFindings:
         classified = classify_entries(entries)
 
         assert compute_secret_findings(classified) == {}
+
+
+class TestCorsMisconfigurations:
+    def test_wildcard_origin_with_credentials_flagged(self) -> None:
+        entries = [
+            _entry(
+                extra_response_headers=(
+                    HarHeader("Access-Control-Allow-Origin", "*"),
+                    HarHeader("Access-Control-Allow-Credentials", "true"),
+                )
+            )
+        ]
+        classified = classify_entries(entries)
+
+        findings = compute_cors_misconfigurations(classified)
+
+        assert findings == [CorsMisconfiguration(har_entry_index=0, allow_origin="*")]
+
+    def test_wildcard_origin_without_credentials_not_flagged(self) -> None:
+        entries = [_entry(extra_response_headers=(HarHeader("Access-Control-Allow-Origin", "*"),))]
+        classified = classify_entries(entries)
+
+        assert compute_cors_misconfigurations(classified) == []
+
+    def test_specific_origin_with_credentials_not_flagged(self) -> None:
+        entries = [
+            _entry(
+                extra_response_headers=(
+                    HarHeader("Access-Control-Allow-Origin", "https://trusted.example.com"),
+                    HarHeader("Access-Control-Allow-Credentials", "true"),
+                )
+            )
+        ]
+        classified = classify_entries(entries)
+
+        assert compute_cors_misconfigurations(classified) == []
+
+    def test_static_assets_excluded(self) -> None:
+        entries = [
+            _static_entry(
+                extra_response_headers=(
+                    HarHeader("Access-Control-Allow-Origin", "*"),
+                    HarHeader("Access-Control-Allow-Credentials", "true"),
+                )
+            )
+        ]
+        classified = classify_entries(entries)
+
+        assert compute_cors_misconfigurations(classified) == []

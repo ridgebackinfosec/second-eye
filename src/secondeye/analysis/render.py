@@ -18,6 +18,7 @@ from secondeye.analysis.signals import (
     OutlierInfo,
     SecretFinding,
     compute_auth_mechanisms,
+    compute_cors_misconfigurations,
     compute_debug_page_hints,
     compute_distinct_endpoints,
     compute_parameter_names,
@@ -172,7 +173,8 @@ def _render_summary(classified: list[ClassifiedEntry]) -> list[str]:
 def _render_capture_signals(classified: list[ClassifiedEntry]) -> list[str]:
     posture = compute_security_header_posture(classified)
     hints = compute_stack_hints(classified)
-    if not posture and not hints:
+    cors_findings = compute_cors_misconfigurations(classified)
+    if not posture and not hints and not cors_findings:
         return []
     lines = ["", "## Capture Signals", ""]
     if posture:
@@ -186,6 +188,14 @@ def _render_capture_signals(classified: list[ClassifiedEntry]) -> list[str]:
         lines.append("**Stack fingerprint hints:**")
         for hint in hints:
             lines.append(f"- `{hint.value[:200]}` ({hint.source})")
+        lines.append("")
+    if cors_findings:
+        lines.append("**CORS misconfigurations:**")
+        for finding in cors_findings:
+            lines.append(
+                f"- entry #{finding.har_entry_index}: Access-Control-Allow-Origin: * "
+                "combined with Access-Control-Allow-Credentials: true"
+            )
     return lines
 
 

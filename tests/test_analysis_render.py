@@ -430,6 +430,33 @@ class TestCaptureSignalsSection:
         assert "Referrer-Policy: present on 0/1 responses" in md
         assert "Permissions-Policy: present on 0/1 responses" in md
 
+    def test_cors_misconfiguration_rendered(self) -> None:
+        entry = HarEntry(
+            started_at=_at(0),
+            time_ms=1.0,
+            request=HarRequest(
+                method="GET",
+                url="https://example.com/api/data",
+                http_version="1.1",
+                headers=(HarHeader("X-Requested-With", "XMLHttpRequest"),),
+                body=b"",
+            ),
+            response=HarResponse(
+                status=200,
+                status_text="OK",
+                http_version="1.1",
+                headers=(
+                    HarHeader("Content-Type", "application/json"),
+                    HarHeader("Access-Control-Allow-Origin", "*"),
+                    HarHeader("Access-Control-Allow-Credentials", "true"),
+                ),
+                body=b'{"ok":true}',
+            ),
+        )
+        md = _render([entry])
+        assert "**CORS misconfigurations:**" in md
+        assert "Access-Control-Allow-Origin: * combined with" in md
+
 
 class TestTableOfContents:
     def test_toc_section_present_with_correct_anchor(self) -> None:

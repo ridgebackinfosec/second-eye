@@ -97,11 +97,11 @@ def load_or_create_ca(state_dir: Path | None = None) -> CertificateAuthority:
     if cert_exists and key_exists:
         return _load_ca(cert_path, key_path)
     if cert_exists != key_exists:
-        orphaned_path = key_path if cert_exists else cert_path
+        missing_path = key_path if cert_exists else cert_path
         logger.warning(
-            "found %s without its counterpart — the existing CA is incomplete and "
+            "%s is missing its counterpart — the existing CA is incomplete and "
             "will be regenerated, invalidating trust for any previously-captured host",
-            orphaned_path,
+            missing_path,
         )
     return _generate_ca(ca_dir, cert_path, key_path)
 

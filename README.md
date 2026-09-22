@@ -274,6 +274,32 @@ These are deliberate exclusions, not oversights:
 
 ---
 
+## Operational considerations
+
+Two properties of the design above are worth knowing before pointing
+`secondeye` at a target, or automating a high-volume workflow through it:
+
+- **Response/request bodies are held fully in memory.** There is no
+  `--max-body-size` flag and no cap on body accumulation — this follows
+  directly from the no-truncation design above (a truncated in-memory
+  buffer would mean a truncated capture). `--max-connections` bounds how
+  many concurrent connections the proxy will accept, but not how large
+  any single connection's body can be. A target that returns a very large
+  or adversarially large response will consume proxy memory proportional
+  to that response's size. Be mindful of this on memory-constrained hosts,
+  or when scanning targets you don't fully trust.
+- **`--upstream-proxy` misconfiguration relays everything, not just
+  in-scope traffic.** If the host/port passed to `--upstream-proxy` is
+  wrong (typo, stale value, or an unintended host reachable on the same
+  network), every CONNECT tunnel `secondeye` opens — in-scope traffic it
+  decrypts *and* out-of-scope traffic it blind-relays — gets routed
+  through that host. This is inherent to how proxy chaining works (the
+  same is true of Burp's or mitmproxy's own upstream-proxy features), not
+  a `secondeye`-specific defect, but the blast radius is larger than the
+  flag's name alone suggests.
+
+---
+
 ## How it works, briefly
 
 `secondeye` inspects the SNI from the TLS ClientHello *before* completing any

@@ -1,5 +1,6 @@
 """Tests for secondeye.tls.ca (SPEC.md §5.2, §5.4, §14 Phase 2)."""
 
+import logging
 import shutil
 import subprocess
 from pathlib import Path
@@ -47,6 +48,33 @@ class TestCaGenerationAndPersistence:
             check=False,
         )
         assert result.returncode == 0, result.stderr
+
+
+def test_warns_when_only_cert_file_exists(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    # First call generates a full CA (both cert and key persisted).
+    load_or_create_ca(tmp_path)
+    key_path = tmp_path / "ca" / "secondeye-ca.key"
+    key_path.unlink()  # simulate partial corruption: key missing, cert remains
+
+    with caplog.at_level(logging.WARNING, logger="secondeye.tls.ca"):
+        load_or_create_ca(tmp_path)
+
+    assert any(
+        "secondeye-ca.key" in r.message and "regenerat" in r.message.lower() for r in caplog.records
+    )
+
+
+def test_warns_when_only_key_file_exists(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    load_or_create_ca(tmp_path)
+    cert_path = tmp_path / "ca" / "secondeye-ca.pem"
+    cert_path.unlink()  # simulate partial corruption: cert missing, key remains
+
+    with caplog.at_level(logging.WARNING, logger="secondeye.tls.ca"):
+        load_or_create_ca(tmp_path)
+
+    assert any(
+        "secondeye-ca.pem" in r.message and "regenerat" in r.message.lower() for r in caplog.records
+    )
 
 
 class TestCreatedFlag:

@@ -8,6 +8,7 @@ operator only has to install trust for it once per host.
 from __future__ import annotations
 
 import datetime
+import logging
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,8 @@ from cryptography.x509.oid import NameOID
 from secondeye.exceptions import CertGenerationError
 
 __all__ = ["CertificateAuthority", "ca_exists", "default_state_dir", "load_or_create_ca"]
+
+logger = logging.getLogger(__name__)
 
 _CA_KEY_SIZE = 2048
 _CA_VALIDITY_DAYS = 3650
@@ -89,8 +92,17 @@ def load_or_create_ca(state_dir: Path | None = None) -> CertificateAuthority:
     cert_path = ca_dir / _CERT_FILENAME
     key_path = ca_dir / _KEY_FILENAME
 
-    if cert_path.exists() and key_path.exists():
+    cert_exists = cert_path.exists()
+    key_exists = key_path.exists()
+    if cert_exists and key_exists:
         return _load_ca(cert_path, key_path)
+    if cert_exists != key_exists:
+        orphaned_path = key_path if cert_exists else cert_path
+        logger.warning(
+            "found %s without its counterpart — the existing CA is incomplete and "
+            "will be regenerated, invalidating trust for any previously-captured host",
+            orphaned_path,
+        )
     return _generate_ca(ca_dir, cert_path, key_path)
 
 

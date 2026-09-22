@@ -727,3 +727,42 @@ class TestIdValueReuse:
         classified = classify_entries(entries)
 
         assert compute_id_value_reuse(classified) == {}
+
+    def test_same_entry_query_and_body_duplicate_pair_is_not_self_reuse(self) -> None:
+        # order_id appears in BOTH the query string and the JSON body of
+        # the SAME entry — a common REST pattern. This must not produce a
+        # spurious self-referential note on entry 0.
+        entries = [
+            _entry(
+                method="POST",
+                url="https://example.com/api/orders/update?order_id=9001",
+                request_headers=(HarHeader("Content-Type", "application/json"),),
+                request_body=b'{"order_id": "9001"}',
+            ),
+        ]
+        classified = classify_entries(entries)
+
+        assert compute_id_value_reuse(classified) == {}
+
+    def test_genuine_later_reuse_still_detected_after_same_entry_duplicate(self) -> None:
+        # Same setup as above, but a SECOND entry genuinely reuses the
+        # value — this must still be detected and attributed to entry 1,
+        # not silently absorbed by the (now-fixed) non-note on entry 0.
+        entries = [
+            _entry(
+                method="POST",
+                url="https://example.com/api/orders/update?order_id=9001",
+                request_headers=(HarHeader("Content-Type", "application/json"),),
+                request_body=b'{"order_id": "9001"}',
+            ),
+            _entry(url="https://example.com/api/orders/detail?order_id=9001"),
+        ]
+        classified = classify_entries(entries)
+
+        reuse = compute_id_value_reuse(classified)
+
+        assert reuse == {
+            1: IdValueReuseNote(
+                name="order_id", value="9001", first_seen_index=0, further_occurrences=0
+            )
+        }

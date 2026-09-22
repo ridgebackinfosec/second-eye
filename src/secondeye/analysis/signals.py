@@ -1,10 +1,13 @@
-"""Cheap per-capture derived signals (SPEC.md §11.8).
+"""Per-capture derived signals (SPEC.md §11.8, §11.9, §11.10).
 
-Descriptive-statistics outlier detection and header/cookie-based fingerprint
-heuristics, surfaced in ANALYSIS.md (analysis/render.py). Every function
-here scans the capture once and returns a lookup keyed by raw.har entry
-index — no cross-entry correlation, matching the module-boundary convention
-that compute lives here and rendering lives in render.py (CLAUDE.md).
+Descriptive-statistics outlier detection, header/cookie-based fingerprint
+heuristics, and a small set of correlation passes (auth-header/cookie
+aggregation, cross-request ID-value reuse), surfaced in ANALYSIS.md
+(analysis/render.py). Most functions here scan the capture once and return
+a lookup keyed by raw.har entry index without looking at any other entry;
+compute_id_value_reuse is the one exception — it explicitly correlates
+values across entries to find reuse. Compute lives here and rendering
+lives in render.py (CLAUDE.md's module-boundary convention).
 """
 
 from __future__ import annotations
@@ -337,7 +340,7 @@ def compute_id_value_reuse(classified: list[ClassifiedEntry]) -> dict[int, IdVal
     for c in classified:
         if c.category == Category.STATIC_ASSET:
             continue
-        for name, value in _extract_id_shaped_values(c.entry):
+        for name, value in set(_extract_id_shaped_values(c.entry)):
             key = (name, value)
             if key not in first_seen:
                 first_seen[key] = c.index

@@ -789,3 +789,70 @@ class TestSequenceDiagram:
         # arrow pair too, with the final status and hop count noted.
         assert "Operator->>Target: GET /dashboard" in md
         assert "Target-->>Operator: 200 (final, 2 hops)" in md
+
+
+class TestPhase3SignalsIntegration:
+    def test_all_phase3_signals_present_together_and_earlier_phases_still_work(self) -> None:
+        debug_entry = HarEntry(
+            started_at=_at(0),
+            time_ms=1.0,
+            request=HarRequest(
+                method="GET",
+                url="https://example.com/broken?order_id=9001",
+                http_version="1.1",
+                headers=(),
+                body=b"",
+            ),
+            response=HarResponse(
+                status=500,
+                status_text="Internal Server Error",
+                http_version="1.1",
+                headers=(
+                    HarHeader("Content-Type", "text/html"),
+                    HarHeader("Set-Cookie", "session_id=abc123; Path=/"),
+                    HarHeader("Access-Control-Allow-Origin", "*"),
+                    HarHeader("Access-Control-Allow-Credentials", "true"),
+                ),
+                body=(
+                    b"You're seeing this because you have DEBUG = True "
+                    b"and your key is AKIAABCDEFGHIJKLMNOP"
+                ),
+            ),
+        )
+        reuse_entry = HarEntry(
+            started_at=_at(1),
+            time_ms=1.0,
+            request=HarRequest(
+                method="GET",
+                url="https://example.com/api/orders/detail?order_id=9001",
+                http_version="1.1",
+                headers=(HarHeader("X-Requested-With", "XMLHttpRequest"),),
+                body=b"",
+            ),
+            response=HarResponse(
+                status=200,
+                status_text="OK",
+                http_version="1.1",
+                headers=(HarHeader("Content-Type", "application/json"),),
+                body=b'{"ok":true}',
+            ),
+        )
+        md = _render([debug_entry, reuse_entry])
+
+        # Phase 3 features.
+        assert "**Warning:** response body matches a known Django debug/error page" in md
+        assert "AWS access key `AKIAABCDEFGHIJKLMNOP`" in md
+        assert "Referrer-Policy: present on 0/2 responses" in md
+        assert "**CORS misconfigurations:**" in md
+        assert "**Cookie flag issues:**" in md
+        assert "## Sequence Diagram" in md
+        assert "**Note:** parameter `order_id` value `9001` was first observed in" in md
+
+        # Phase 1/2 features must still work, unaffected by Phase 3's insertions.
+        assert "## Summary" in md
+        assert "## Capture Signals" in md
+        assert "## Contents" in md
+        assert md.index("## Summary") < md.index("## Capture Signals")
+        assert md.index("## Capture Signals") < md.index("## Sequence Diagram")
+        assert md.index("## Sequence Diagram") < md.index("## Contents")
+        assert md.index("## Contents") < md.index("## Flow 1")

@@ -57,7 +57,21 @@ and a new `## Summary` section with four independently-omittable sub-parts —
 endpoints touched, auth mechanisms observed, a status-code rollup, and
 parameter names observed (query-string and JSON-body top-level keys only,
 never values, for spotting IDOR-candidate parameters like `user_id` at a
-glance).
+glance). ANALYSIS.md Phase 3 heavier signals (v0.7.0): framework
+debug/error-page detection (fixed Django/Flask-Werkzeug/Rails/ASP.NET/PHP
+signature matches, rendered as a per-flow `**Warning:**`); credential-pattern
+detection (AWS access keys, PEM private-key headers, JWT-shaped strings in
+response bodies, rendered **unredacted** per this tool's no-redaction design
+stance — see `SPEC.md` §0); a broadened `## Capture Signals` audit
+(`X-XSS-Protection`/`Referrer-Policy`/`Permissions-Policy` header presence, a
+CORS misconfiguration check for `Access-Control-Allow-Origin: *` paired with
+`Access-Control-Allow-Credentials: true`, and a `Set-Cookie`
+`Secure`/`HttpOnly`/`SameSite` flag audit); cross-request ID-value reuse
+detection (query-string/JSON-body parameter values reused elsewhere in the
+capture, deliberately excluding auth/session values); and a capture-wide
+`## Sequence Diagram` section (Mermaid `sequenceDiagram`, one
+request/response arrow pair per narrative flow across "Operator" and
+"Target" lanes).
 
 ## Commands
 

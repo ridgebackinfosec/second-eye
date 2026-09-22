@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import os
 import signal
+import stat
 import subprocess
 from pathlib import Path
 
@@ -140,6 +141,39 @@ def _daemon(tmp_path: Path, **overrides: object) -> Daemon:
     }
     base.update(overrides)
     return Daemon(DaemonConfig(**base))  # type: ignore[arg-type]
+
+
+class TestStateDirectoryPermissions:
+    def test_state_dir_locked_to_owner_only(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / "state"
+        Daemon(
+            DaemonConfig(
+                listen_port=0,
+                targets=["example.com"],
+                no_upstream=True,
+                state_dir=state_dir,
+            )
+        )
+        assert state_dir.is_dir()
+        assert stat.S_IMODE(state_dir.stat().st_mode) == 0o700
+
+    def test_preexisting_world_readable_state_dir_gets_tightened(self, tmp_path: Path) -> None:
+        # Simulates upgrading from a pre-v1.0.0 install, where the state
+        # directory was created with default umask permissions.
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(mode=0o755)
+        os.chmod(state_dir, 0o755)  # mkdir's mode= is masked by umask; force it explicitly
+
+        Daemon(
+            DaemonConfig(
+                listen_port=0,
+                targets=["example.com"],
+                no_upstream=True,
+                state_dir=state_dir,
+            )
+        )
+
+        assert stat.S_IMODE(state_dir.stat().st_mode) == 0o700
 
 
 class TestStartupAndControlSocket:

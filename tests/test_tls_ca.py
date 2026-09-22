@@ -1,7 +1,9 @@
 """Tests for secondeye.tls.ca (SPEC.md §5.2, §5.4, §14 Phase 2)."""
 
 import logging
+import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -59,9 +61,10 @@ def test_warns_when_only_cert_file_exists(tmp_path: Path, caplog: pytest.LogCapt
     with caplog.at_level(logging.WARNING, logger="secondeye.tls.ca"):
         load_or_create_ca(tmp_path)
 
-    assert any(
-        "secondeye-ca.key" in r.message and "regenerat" in r.message.lower() for r in caplog.records
-    )
+    message = next(r.message for r in caplog.records if "secondeye-ca.key" in r.message)
+    assert "secondeye-ca.pem" in message  # the surviving file is also named
+    assert message.index("secondeye-ca.pem") < message.index("secondeye-ca.key")
+    assert "regenerat" in message.lower()
 
 
 def test_warns_when_only_key_file_exists(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -72,9 +75,40 @@ def test_warns_when_only_key_file_exists(tmp_path: Path, caplog: pytest.LogCaptu
     with caplog.at_level(logging.WARNING, logger="secondeye.tls.ca"):
         load_or_create_ca(tmp_path)
 
-    assert any(
-        "secondeye-ca.pem" in r.message and "regenerat" in r.message.lower() for r in caplog.records
-    )
+    message = next(r.message for r in caplog.records if "secondeye-ca.key" in r.message)
+    assert "secondeye-ca.pem" in message  # the surviving file is also named
+    assert message.index("secondeye-ca.key") < message.index("secondeye-ca.pem")
+    assert "regenerat" in message.lower()
+
+
+class TestStateDirectoryPermissions:
+    def test_state_dir_locked_to_owner_only(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / "state"
+        load_or_create_ca(state_dir)
+        assert state_dir.is_dir()
+        assert stat.S_IMODE(state_dir.stat().st_mode) == 0o700
+
+    def test_preexisting_world_readable_state_dir_gets_tightened(self, tmp_path: Path) -> None:
+        # Simulates upgrading from a pre-v1.0.0 install, where the state
+        # directory was created with default umask permissions.
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(mode=0o755)
+        os.chmod(state_dir, 0o755)  # mkdir's mode= is masked by umask; force it explicitly
+
+        load_or_create_ca(state_dir)
+
+        assert stat.S_IMODE(state_dir.stat().st_mode) == 0o700
+
+    def test_lockdown_runs_before_the_ca_is_created(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(mode=0o500)
+        os.chmod(state_dir, 0o500)  # read+execute only: unwritable until tightened to 0700
+
+        load_or_create_ca(state_dir)
+
+        # Only reachable if the chmod preceded CA file creation.
+        assert (state_dir / "ca" / "secondeye-ca.pem").exists()
+        assert stat.S_IMODE(state_dir.stat().st_mode) == 0o700
 
 
 class TestCreatedFlag:

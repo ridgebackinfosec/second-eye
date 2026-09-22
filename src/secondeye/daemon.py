@@ -21,7 +21,6 @@ import logging
 import os
 import re
 import signal
-import stat
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -99,7 +98,6 @@ class Daemon:
                 §3.3/§3.4/§3.7).
             ScopeConfigError: If a --target-regex pattern doesn't compile.
         """
-        _lock_down_state_dir(config.state_dir)
         self._config = config
         self._shutdown_event = asyncio.Event()
 
@@ -287,27 +285,3 @@ def _upstream_label(config: DaemonConfig) -> str | None:
     if config.no_upstream:
         return None
     return f"{config.upstream_host}:{config.upstream_port}"
-
-
-def _lock_down_state_dir(state_dir: Path) -> None:
-    """Ensure secondeye's state directory is readable only by its owner.
-
-    Runs first, before any component (the CA, capture manager, or control
-    socket) creates a path under ``state_dir`` — locking the top-level
-    directory to 0700 transitively protects everything beneath it via
-    POSIX directory-traversal semantics (no execute permission on a parent
-    means nothing under it is reachable, regardless of the children's own
-    modes). Idempotent and safe to call on every daemon start, including
-    against a pre-existing world-readable directory from an older
-    secondeye version — this tool's entire design premise is full-fidelity,
-    unredacted capture of credentials/tokens/secrets (SPEC.md §0), so a
-    world-readable state directory on a multi-user host would otherwise
-    expose every captured secret to any local user.
-
-    Args:
-        state_dir: secondeye's state directory (default
-            ``~/.local/state/secondeye``, see tls/ca.py's
-            default_state_dir()).
-    """
-    state_dir.mkdir(parents=True, exist_ok=True)
-    state_dir.chmod(stat.S_IRWXU)

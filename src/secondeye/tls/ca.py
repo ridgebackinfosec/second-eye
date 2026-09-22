@@ -75,6 +75,40 @@ def ca_exists(state_dir: Path | None = None) -> bool:
     return (ca_dir / _CERT_FILENAME).exists() and (ca_dir / _KEY_FILENAME).exists()
 
 
+def _lock_down_state_dir(state_dir: Path) -> None:
+    """Ensure secondeye's state directory is readable only by its owner.
+
+    Runs first, before any CA file or path under ``state_dir`` is created
+    or read — locking the top-level directory to 0700 transitively
+    protects everything beneath it via POSIX directory-traversal
+    semantics (no execute permission on a parent means nothing under it
+    is reachable, regardless of the children's own modes). Idempotent and
+    safe to call on every invocation, including against a pre-existing
+    world-readable directory from an older secondeye version — this
+    tool's entire design premise is full-fidelity, unredacted capture of
+    credentials/tokens/secrets (SPEC.md §0), so a world-readable state
+    directory on a multi-user host would otherwise expose every captured
+    secret to any local user.
+
+    Called from load_or_create_ca so every entry point that touches the
+    CA (the daemon, `secondeye ca export`, `secondeye ca status`) gets
+    this protection, not just the daemon path.
+
+    Args:
+        state_dir: secondeye's state directory (default
+            ``~/.local/state/secondeye``, see default_state_dir()).
+
+    Raises:
+        CertGenerationError: If the directory can't be created or its
+            permissions can't be tightened.
+    """
+    try:
+        state_dir.mkdir(mode=stat.S_IRWXU, parents=True, exist_ok=True)
+        state_dir.chmod(stat.S_IRWXU)
+    except OSError as exc:
+        raise CertGenerationError(f"failed to secure state directory {state_dir}: {exc}") from exc
+
+
 def load_or_create_ca(state_dir: Path | None = None) -> CertificateAuthority:
     """Load the persisted root CA, generating and persisting one if absent.
 
@@ -86,9 +120,12 @@ def load_or_create_ca(state_dir: Path | None = None) -> CertificateAuthority:
         The loaded or newly generated CertificateAuthority.
 
     Raises:
-        CertGenerationError: If CA generation or loading fails.
+        CertGenerationError: If the state directory can't be secured, or
+            CA generation or loading fails.
     """
-    ca_dir = (state_dir if state_dir is not None else default_state_dir()) / "ca"
+    resolved_state_dir = state_dir if state_dir is not None else default_state_dir()
+    _lock_down_state_dir(resolved_state_dir)
+    ca_dir = resolved_state_dir / "ca"
     cert_path = ca_dir / _CERT_FILENAME
     key_path = ca_dir / _KEY_FILENAME
 
@@ -97,10 +134,12 @@ def load_or_create_ca(state_dir: Path | None = None) -> CertificateAuthority:
     if cert_exists and key_exists:
         return _load_ca(cert_path, key_path)
     if cert_exists != key_exists:
+        surviving_path = cert_path if cert_exists else key_path
         missing_path = key_path if cert_exists else cert_path
         logger.warning(
-            "%s is missing its counterpart — the existing CA is incomplete and "
+            "CA is incomplete: %s exists but %s is missing — the existing CA "
             "will be regenerated, invalidating trust for any previously-captured host",
+            surviving_path,
             missing_path,
         )
     return _generate_ca(ca_dir, cert_path, key_path)

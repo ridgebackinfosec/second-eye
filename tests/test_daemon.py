@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import logging
 import os
 import signal
 import stat
@@ -144,35 +145,35 @@ def _daemon(tmp_path: Path, **overrides: object) -> Daemon:
 
 
 class TestStateDirectoryPermissions:
-    def test_state_dir_locked_to_owner_only(self, tmp_path: Path) -> None:
+    def test_state_dir_locked_via_daemon_construction(self, tmp_path: Path) -> None:
         state_dir = tmp_path / "state"
         Daemon(
             DaemonConfig(
-                listen_port=0,
-                targets=["example.com"],
-                no_upstream=True,
-                state_dir=state_dir,
+                listen_port=0, targets=["example.com"], no_upstream=True, state_dir=state_dir
             )
         )
-        assert state_dir.is_dir()
         assert stat.S_IMODE(state_dir.stat().st_mode) == 0o700
 
-    def test_preexisting_world_readable_state_dir_gets_tightened(self, tmp_path: Path) -> None:
-        # Simulates upgrading from a pre-v1.0.0 install, where the state
-        # directory was created with default umask permissions.
+    def test_ca_warning_fires_and_state_dir_still_locked_through_daemon(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         state_dir = tmp_path / "state"
-        state_dir.mkdir(mode=0o755)
-        os.chmod(state_dir, 0o755)  # mkdir's mode= is masked by umask; force it explicitly
-
+        # First daemon construction creates a full CA.
         Daemon(
             DaemonConfig(
-                listen_port=0,
-                targets=["example.com"],
-                no_upstream=True,
-                state_dir=state_dir,
+                listen_port=0, targets=["example.com"], no_upstream=True, state_dir=state_dir
             )
         )
+        (state_dir / "ca" / "secondeye-ca.key").unlink()  # simulate partial corruption
 
+        with caplog.at_level(logging.WARNING, logger="secondeye.tls.ca"):
+            Daemon(
+                DaemonConfig(
+                    listen_port=0, targets=["example.com"], no_upstream=True, state_dir=state_dir
+                )
+            )
+
+        assert any("regenerat" in r.message.lower() for r in caplog.records)
         assert stat.S_IMODE(state_dir.stat().st_mode) == 0o700
 
 

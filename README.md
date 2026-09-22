@@ -291,12 +291,12 @@ Two properties of the design above are worth knowing before pointing
 - **`--upstream-proxy` misconfiguration relays everything, not just
   in-scope traffic.** If the host/port passed to `--upstream-proxy` is
   wrong (typo, stale value, or an unintended host reachable on the same
-  network), every CONNECT tunnel `secondeye` opens — in-scope traffic it
-  decrypts *and* out-of-scope traffic it blind-relays — gets routed
-  through that host. This is inherent to how proxy chaining works (the
-  same is true of Burp's or mitmproxy's own upstream-proxy features), not
-  a `secondeye`-specific defect, but the blast radius is larger than the
-  flag's name alone suggests.
+  network), every connection `secondeye` opens — in-scope traffic it
+  decrypts, out-of-scope traffic it blind-relays, and plain-HTTP requests
+  it forwards — gets routed through that host. This is inherent to how
+  proxy chaining works (the same is true of Burp's or mitmproxy's own
+  upstream-proxy features), not a `secondeye`-specific defect, but the
+  blast radius is larger than the flag's name alone suggests.
 
 ---
 

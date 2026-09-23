@@ -33,6 +33,16 @@ pre-commit && pre-commit install`. It runs whatever `ruff`/`mypy`/
 `pytest` are on `PATH`, so activate this repo's `.venv` (or otherwise
 have the dev extras installed) before committing.
 
+A push to `main` that bumps `version` in `pyproject.toml` is
+automatically tagged and released on GitHub (the `tag-release` job in
+`.github/workflows/ci.yml`, gated on the four gates passing first). Its
+release notes are pulled verbatim from `CHANGELOG.md`'s matching
+`## X.Y.Z - YYYY-MM-DD` section — so a version bump without a matching
+`CHANGELOG.md` entry fails that job loudly rather than publishing an
+empty release. Bumping the version and adding its `CHANGELOG.md` entry
+in the same change (already asked of every contributor above) is what
+makes this automatic.
+
 ## Testing conventions
 
 This repo overwhelmingly tests against **real sockets, real TLS

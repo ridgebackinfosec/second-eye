@@ -47,3 +47,74 @@ jobs:
 
       - name: pytest
         run: pytest -q
+
+  tag-release:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Parse version from pyproject.toml
+        id: version
+        run: |
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check if this version is already released
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.version.outputs.tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "${{ steps.version.outputs.tag }} already released — nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Pulls this version's own section out of CHANGELOG.md (Keep a
+      # Changelog format, headings like "## 1.0.0 - 2026-09-23") to use as
+      # the release body, reusing the changelog that's already hand-
+      # maintained per version rather than a flat auto-generated commit
+      # list. Fails loudly if no matching heading exists, since that means
+      # the version was bumped without the CHANGELOG.md entry
+      # CONTRIBUTING.md already asks every contributor to add.
+      - name: Extract release notes from CHANGELOG.md
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          awk -v ver="$VERSION" '
+            BEGIN { found=0 }
+            /^## / {
+              if (found) exit
+              if ($0 == "## " ver || index($0, "## " ver " ") == 1) { found=1; next }
+            }
+            found { print }
+          ' CHANGELOG.md > release_notes.md
+          if [ ! -s release_notes.md ]; then
+            echo "::error::No CHANGELOG.md section found for version $VERSION (expected a '## $VERSION - YYYY-MM-DD' heading) — add one before this version can be released."
+            exit 1
+          fi
+
+      # No --prerelease/--draft, so this is a normal published release —
+      # GitHub automatically marks the most recently published release as
+      # "latest", so nothing else is needed for that.
+      - name: Create tag and release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --notes-file release_notes.md \
+            --target main

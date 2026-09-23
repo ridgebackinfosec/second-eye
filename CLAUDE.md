@@ -27,7 +27,11 @@ Manual testing has passed. Coverage sits around 95% (floor is 90%, enforced via
 runs all four gates — `ruff check`, `ruff format --check`, `mypy --strict`,
 `pytest` — on every push to `main`, across Python 3.11/3.12/3.13. An
 optional `.pre-commit-config.yaml` mirrors the same four gates as local
-git hooks (see `CONTRIBUTING.md`).
+git hooks (see `CONTRIBUTING.md`). A push to `main` that bumps
+`pyproject.toml`'s `version` is auto-tagged (`vX.Y.Z`) and published as
+a GitHub Release once those four gates pass (`tag-release` job in
+`ci.yml`), with release notes pulled from `CHANGELOG.md`'s matching
+section.
 
 `SECURITY.md`, `CHANGELOG.md`, and `CONTRIBUTING.md` now exist at the
 repo root (v1.0.0 readiness pass) — keep `CHANGELOG.md`'s `## Unreleased`

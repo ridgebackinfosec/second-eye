@@ -5,6 +5,17 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 1.0.1 - 2026-09-23
+
+### Added
+- A `tag-release` CI job (`.github/workflows/ci.yml`) that auto-tags and
+  publishes a GitHub Release whenever `pyproject.toml`'s `version` is
+  bumped on `main` and the four gates pass — release notes are pulled
+  verbatim from this file's matching `## X.Y.Z - YYYY-MM-DD` section.
+  Idempotent (skips if that version's tag already exists), so it's safe
+  to run on every push regardless of whether that push touched the
+  version. Replaces manual tagging going forward.
+
 ## 1.0.0 - 2026-09-23
 
 ### Added

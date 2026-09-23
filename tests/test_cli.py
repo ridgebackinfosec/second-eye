@@ -345,7 +345,6 @@ class TestUpstreamProxyDefaultPathWiring:
         self, _isolated_home: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         home = _isolated_home
-        stub_port = _free_port()
         env = {**os.environ, "HOME": str(home)}
         proc = subprocess.Popen(
             [
@@ -356,8 +355,6 @@ class TestUpstreamProxyDefaultPathWiring:
                 "start",
                 "--target",
                 "example.com",
-                "--upstream-proxy",
-                f"127.0.0.1:{stub_port}",
                 "--upstream-insecure",
                 "--listen-address",
                 f"127.0.0.1:{_free_port()}",
@@ -379,7 +376,7 @@ class TestUpstreamProxyDefaultPathWiring:
 
             code, out, _err = _run_cli(capsys, "proxy", "status")
             assert code == 0
-            assert f"Upstream:       127.0.0.1:{stub_port}" in out
+            assert "Upstream:       127.0.0.1:8080" in out
         finally:
             _stop_daemon_subprocess(proc, home)
 

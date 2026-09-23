@@ -360,11 +360,8 @@ class TestUnhandledExceptionSurvival:
                     b"Connection: close\r\n\r\n"
                 )
                 await writer.drain()
-                # Value intentionally unchecked: whether the client sees a
-                # forwarded response or an empty read depends on exactly
-                # where the injected exception fires relative to any
-                # response already being forwarded (see brief note).
-                _data = await asyncio.wait_for(reader.read(4096), timeout=5)
+                data = await asyncio.wait_for(reader.read(4096), timeout=5)
+                assert data == b""
                 writer.close()
 
             assert any("unhandled exception" in r.message for r in caplog.records)

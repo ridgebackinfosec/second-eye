@@ -143,6 +143,18 @@ class TestControlCharacterAndEmptyInputs:
         result = matcher.match("exa\x00mple.com")
         assert result.matched is False
 
+    def test_null_byte_truncation_does_not_widen_scope(self) -> None:
+        # The discriminating case: an in-scope prefix followed by a NUL
+        # followed by an out-of-scope suffix. A truncation bug in
+        # normalize_hostname (stopping at the first NUL byte) would
+        # normalize this to "example.com" and incorrectly match — an
+        # out-of-scope host silently intercepted. This is the actual
+        # security-relevant shape a null-byte handling bug would take;
+        # the sibling test above only proves a null byte doesn't
+        # accidentally match, not that it can't be used to smuggle scope.
+        matcher = ScopeMatcher(targets=["example.com"])
+        assert matcher.match("example.com\x00.evil.org").matched is False
+
     def test_empty_hostname_against_nonempty_target_does_not_match(self) -> None:
         matcher = ScopeMatcher(targets=["example.com"])
         assert matcher.match("").matched is False

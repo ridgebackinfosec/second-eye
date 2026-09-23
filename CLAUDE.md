@@ -18,7 +18,9 @@ All 7 build phases in `SPEC.md` §14 are complete and passing:
 `scope/matcher.py` → `tls/{ca,leaf}.py` → `proxy/sni.py` →
 `proxy/{splice,listener}.py` → `proxy/{intercept,upstream}.py` +
 `capture/har.py` + plain-HTTP path → `recording/`, `analysis/`,
-`capture/buffer.py` → `daemon.py`, `cli.py`, `README.md`.
+`capture/buffer.py` → `daemon.py`, `cli.py`, `README.md`. v1.0.0
+shipped 2026-09-23 — see `CHANGELOG.md` for the full readiness-pass
+changelog.
 
 Manual testing has passed. Coverage sits around 95% (floor is 90%, enforced via
 `pyproject.toml`'s `--cov-fail-under=90`). CI (`.github/workflows/ci.yml`)

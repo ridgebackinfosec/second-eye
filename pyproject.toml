@@ -1,15 +1,50 @@
 [project]
 name = "second-eye"
-version = "0.7.0"
+version = "1.0.0"
 description = "Scope-gated recording proxy for offensive security engagements"
+readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+authors = [
+    { name = "Chris Traynor" },
+]
+keywords = [
+    "proxy",
+    "mitm",
+    "security",
+    "pentest",
+    "offensive-security",
+    "http",
+    "https",
+    "tls",
+    "recording",
+    "har",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Internet :: Proxy Servers",
+]
 dependencies = [
     "cryptography>=42.0,<43.0",
     "h11>=0.14,<0.15",
     "idna>=3.6,<4.0",
     "argcomplete>=3.1,<4.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ridgebackinfosec/second-eye"
+Repository = "https://github.com/ridgebackinfosec/second-eye"
+Issues = "https://github.com/ridgebackinfosec/second-eye/issues"
 
 [project.optional-dependencies]
 dev = [

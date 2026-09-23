@@ -5,8 +5,13 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 1.0.0 - 2026-09-23
+
 ### Added
-- v1.0.0 readiness pass, in progress: the state directory
+- `pyproject.toml` metadata completion: `readme`, `authors`,
+  `[project.urls]` (Homepage/Repository/Issues), `classifiers`, and
+  `keywords`, ahead of the first public v1.0.0 announcement.
+- v1.0.0 readiness pass: the state directory
   (`~/.local/state/secondeye`) is now locked to `0700` on every daemon
   start, transitively protecting the CA, all captured credentials/tokens,
   and the control socket — covering every entry point that touches it

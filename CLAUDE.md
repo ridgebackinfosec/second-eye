@@ -25,6 +25,16 @@ Manual testing has passed. Coverage sits around 95% (floor is 90%, enforced via
 runs all four gates — `ruff check`, `ruff format --check`, `mypy --strict`,
 `pytest` — on every push to `main`, across Python 3.11/3.12/3.13.
 
+`SECURITY.md`, `CHANGELOG.md`, and `CONTRIBUTING.md` now exist at the
+repo root (v1.0.0 readiness pass) — keep `CHANGELOG.md`'s `## Unreleased`
+section current when making a user-visible change, the same way this
+file's own "Post-v1 additions" paragraph below is kept current. The
+state directory (`~/.local/state/secondeye`) is locked to `0700` on
+every daemon start (`tls/ca.py`'s `_lock_down_state_dir`, called from
+`load_or_create_ca` so `ca export`/`ca status` get it too, not just
+`proxy start`) — this is now a documented, public guarantee (see
+`SECURITY.md`), not just an internal detail.
+
 Post-v1 additions (also reflected in `SPEC.md`, not just here):
 `-tf`/`--target-file` (v0.1.2) — line-delimited target list, an alternative
 to repeating `--target`. Second-instance guard, three CLI flag renames

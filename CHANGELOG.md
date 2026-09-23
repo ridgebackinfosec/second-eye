@@ -23,7 +23,9 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   wiring path, `manifest.json`'s redirect-chain/polling-group
   serialization, and three of this codebase's four crash-isolation
   safety nets.
-- `SECURITY.md`, `CONTRIBUTING.md`.
+- `SECURITY.md`, `CONTRIBUTING.md`, and an optional
+  `.pre-commit-config.yaml` mirroring the four CI gates as local git
+  hooks (install with `pipx install pre-commit && pre-commit install`).
 
 ### Changed
 - Test-coverage floor raised from 80% to 90%, reflecting the coverage
@@ -35,6 +37,12 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--no-upstream` are now validated before any CA material is generated
   or the `--upstream-insecure` warning is logged, so an invalid
   combination fails immediately instead of generating a CA first.
+
+### Removed
+- The unused `MalformedClientHelloError` exception class — never raised
+  anywhere; malformed ClientHellos are handled via a returned
+  `SniOutcome.MALFORMED` result instead, so a single bad connection can
+  never crash the daemon.
 
 ### Fixed
 - A stale-control-socket-recovery test that didn't actually exercise the

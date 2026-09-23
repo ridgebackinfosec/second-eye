@@ -2,6 +2,9 @@
 
 ## Development setup
 
+Requires Python 3.11 or newer (`pyproject.toml`'s `requires-python`
+floor).
+
 ```sh
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
@@ -12,7 +15,7 @@ pip install -e ".[dev]"
 Every change must pass all four of these, clean, before it's considered
 done — this is the same bar the project has held since it was first
 built, and the same one CI (`.github/workflows/ci.yml`) now enforces on
-every push to `main`:
+every push to `main` and on every pull request:
 
 ```sh
 pytest -q                       # full test suite, coverage enforced (floor: 90%)
@@ -62,6 +65,15 @@ dataclasses over raw dicts, every exception a `SecondEyeError` subclass,
 Google-style docstrings, `__all__` in every module with a public
 surface). These are enforced by `mypy --strict`/`ruff check` where
 possible, and by review where not.
+
+## Submitting a change
+
+Fork the repo, create a branch, and open a pull request against `main`.
+CI runs the four gates automatically on every pull request. If your
+change is user-visible, add an entry under `## Unreleased` in
+`CHANGELOG.md` — see its existing entries for the expected level of
+detail (a sentence or two from a user's perspective, not a commit-message
+dump).
 
 ## Commit messages
 

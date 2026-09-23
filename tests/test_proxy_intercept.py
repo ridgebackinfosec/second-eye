@@ -10,6 +10,7 @@ already-consumed bytes passed in as ``prebuffered``.
 """
 
 import asyncio
+import logging
 import shutil
 import ssl
 import subprocess
@@ -343,6 +344,46 @@ class TestUpstreamFailures:
             await intercept_server.wait_closed()
 
         assert response.startswith(b"HTTP/1.1 502")
+
+
+class TestUnhandledExceptionSurvival:
+    async def test_unhandled_exception_in_serve_requests_is_logged_without_crashing(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ca = load_or_create_ca(tmp_path)
+        leaf_store = LeafCertificateStore(ca)
+        connector = UpstreamConnector(upstream_host=None, upstream_port=None, no_upstream=True)
+
+        async def _explode(self: InterceptHandler, tls_stream: object, sni: str, port: int) -> None:
+            raise ValueError("boom: simulated bug in request serving")
+
+        monkeypatch.setattr(InterceptHandler, "_serve_requests", _explode)
+
+        async def on_entry_recorded(entry: HarEntry) -> None:
+            raise AssertionError("should never record")
+
+        handler = InterceptHandler(
+            leaf_store=leaf_store, upstream_connector=connector, on_entry_recorded=on_entry_recorded
+        )
+        intercept_server, intercept_port = await _start_intercepting_listener(
+            handler, "exploding.example.com"
+        )
+        try:
+            with caplog.at_level(logging.ERROR, logger="secondeye.proxy.intercept"):
+                reader, writer = await asyncio.open_connection("127.0.0.1", intercept_port)
+                await writer.start_tls(
+                    _client_ssl_context(), server_hostname="exploding.example.com"
+                )
+                writer.write(b"GET / HTTP/1.1\r\nHost: exploding.example.com\r\n\r\n")
+                await writer.drain()
+                data = await asyncio.wait_for(reader.read(4096), timeout=5)
+                assert data == b""  # connection closed without a response
+                writer.close()
+
+            assert any("unhandled exception" in r.message for r in caplog.records)
+        finally:
+            intercept_server.close()
+            await intercept_server.wait_closed()
 
 
 class TestCertGenerationFailure:

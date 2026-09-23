@@ -10,6 +10,9 @@ request, not once at connection-accept time.
 """
 
 import asyncio
+import logging
+
+import pytest
 
 from secondeye.capture.har import HarEntry
 from secondeye.proxy.plain_http import PlainHttpHandler
@@ -322,6 +325,54 @@ class TestUpstreamUnreachable:
             await server.wait_closed()
 
         assert response.startswith(b"HTTP/1.1 502")
+
+
+class TestUnhandledExceptionSurvival:
+    async def test_unhandled_exception_in_serve_requests_is_logged_without_crashing(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        dest_server, dest_port, _received = await _start_plaintext_http_destination()
+        connector = UpstreamConnector(upstream_host=None, upstream_port=None, no_upstream=True)
+
+        async def fake_connect_plain_http(
+            host: str, port: int
+        ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+            return await asyncio.open_connection("127.0.0.1", dest_port)
+
+        connector.connect_plain_http = fake_connect_plain_http  # type: ignore[method-assign]
+
+        async def on_entry_recorded(entry: HarEntry) -> None:
+            raise ValueError("boom: simulated bug recording the entry")
+
+        handler = PlainHttpHandler(
+            scope_matcher=ScopeMatcher(targets=["target.example"]),
+            target_all=False,
+            upstream_connector=connector,
+            on_entry_recorded=on_entry_recorded,
+        )
+        server, port = await _open_plain_http_listener(handler)
+        try:
+            with caplog.at_level(logging.ERROR, logger="secondeye.proxy.plain_http"):
+                reader, writer = await asyncio.open_connection("127.0.0.1", port)
+                writer.write(
+                    b"GET http://target.example/page HTTP/1.1\r\n"
+                    b"Host: target.example\r\n"
+                    b"Connection: close\r\n\r\n"
+                )
+                await writer.drain()
+                # Value intentionally unchecked: whether the client sees a
+                # forwarded response or an empty read depends on exactly
+                # where the injected exception fires relative to any
+                # response already being forwarded (see brief note).
+                _data = await asyncio.wait_for(reader.read(4096), timeout=5)
+                writer.close()
+
+            assert any("unhandled exception" in r.message for r in caplog.records)
+        finally:
+            server.close()
+            await server.wait_closed()
+            dest_server.close()
+            await dest_server.wait_closed()
 
 
 class TestUpstreamModePreservesAbsoluteUriTarget:

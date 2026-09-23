@@ -1,5 +1,6 @@
 """Tests for secondeye.recording.control (SPEC.md §6.4, §14 Phase 6)."""
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -189,6 +190,35 @@ class TestHandlerMerging:
 
             capture_response = await send_request(socket_path, "capture.list")
             assert capture_response["ok"] is True
+        finally:
+            await server.stop()
+
+
+class TestUnhandledExceptionSurvival:
+    async def test_unhandled_exception_in_handler_is_logged_without_crashing(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        socket_path = tmp_path / "control.sock"
+
+        async def exploding_handler(_params: dict[str, object]) -> dict[str, object]:
+            raise RuntimeError("boom: simulated bug in a control handler")
+
+        handlers = {
+            **build_capture_handlers(_manager(tmp_path)),
+            "diagnostic.explode": exploding_handler,
+        }
+        server = ControlServer(socket_path=socket_path, handlers=handlers)
+        await server.start()
+        try:
+            with caplog.at_level(logging.ERROR, logger="secondeye.recording.control"):
+                with pytest.raises(ControlSocketUnavailableError):
+                    await send_request(socket_path, "diagnostic.explode")
+
+            assert any("unhandled exception" in r.message for r in caplog.records)
+
+            # The server itself must still be alive and answering.
+            response = await send_request(socket_path, "capture.list")
+            assert response["ok"] is True
         finally:
             await server.stop()
 

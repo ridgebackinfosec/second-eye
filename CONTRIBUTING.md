@@ -27,6 +27,12 @@ mypy --strict src/secondeye     # type check
 Run `ruff format .` (without `--check`) to auto-fix formatting issues
 before committing.
 
+An optional `.pre-commit-config.yaml` at the repo root mirrors these
+same four gates as local git hooks — install with `pipx install
+pre-commit && pre-commit install`. It runs whatever `ruff`/`mypy`/
+`pytest` are on `PATH`, so activate this repo's `.venv` (or otherwise
+have the dev extras installed) before committing.
+
 ## Testing conventions
 
 This repo overwhelmingly tests against **real sockets, real TLS

@@ -103,13 +103,8 @@ class Daemon:
 
         if not config.targets and not config.target_regex and not config.target_all:
             raise ConfigError(
-                "at least one --target or --target-regex is required "
+                "at least one --target, --target-file, or --target-regex is required "
                 "(or pass --target-all to bypass scope matching entirely)"
-            )
-
-        if config.upstream_insecure:
-            logger.warning(
-                "--upstream-insecure set: TLS verification on the upstream leg is disabled"
             )
 
         self._scope_matcher = ScopeMatcher(
@@ -125,6 +120,10 @@ class Daemon:
             upstream_ca=config.upstream_ca,
             upstream_insecure=config.upstream_insecure,
         )
+        if config.upstream_insecure:
+            logger.warning(
+                "--upstream-insecure set: TLS verification on the upstream leg is disabled"
+            )
 
         self._capture_manager = CaptureManager(
             state_dir=config.state_dir,

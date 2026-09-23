@@ -15,7 +15,6 @@ __all__ = [
     "ScopeConfigError",
     "CertGenerationError",
     "UpstreamConnectionError",
-    "MalformedClientHelloError",
     "CaptureControlError",
     "CaptureAlreadyActiveError",
     "CaptureNameConflictError",
@@ -85,7 +84,3 @@ class CertGenerationError(SecondEyeError):
 
 class UpstreamConnectionError(SecondEyeError):
     """Raised when the upstream proxy or destination is unreachable."""
-
-
-class MalformedClientHelloError(SecondEyeError):
-    """Raised when a buffered ClientHello cannot be parsed."""

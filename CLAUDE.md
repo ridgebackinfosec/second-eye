@@ -211,6 +211,20 @@ touching the affected area:
   chosen for simplicity/compatibility. Leaf certs include an explicit
   Authority Key Identifier (see testing philosophy above for why that
   matters).
+- **`MalformedClientHelloError` was removed** (v1.0.0 readiness pass).
+  `SPEC.md` §8 lists it as part of the "required" custom exception
+  hierarchy, but it was never raised anywhere — confirmed unused since
+  the initial commit, across every version bump since. §8's actual
+  behavioral requirement ("Malformed/non-TLS ClientHello → drop that
+  connection only, `WARNING`") is fully met a different way:
+  `proxy/sni.py`'s `parse_client_hello()` returns a
+  `ClientHelloParseResult` with `outcome=SniOutcome.MALFORMED` instead of
+  raising, by design (see that module's own docstring — a single
+  malformed connection can never take down the daemon this way), and
+  `proxy/listener.py` logs exactly the required `WARNING` and drops the
+  connection when it sees that outcome. Spec intent honored, literal
+  mechanism intentionally different — same shape as every other
+  deviation in this list.
 
 ## Explicit non-goals — do not implement these
 

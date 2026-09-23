@@ -1,6 +1,7 @@
 """Tests for secondeye.recording.control (SPEC.md §6.4, §14 Phase 6)."""
 
 import logging
+import socket
 from pathlib import Path
 
 import pytest
@@ -149,16 +150,19 @@ class TestSecondInstanceGuard:
 
     async def test_stale_socket_file_does_not_block_a_fresh_start(self, tmp_path: Path) -> None:
         socket_path = tmp_path / "control.sock"
-        stale = ControlServer(
-            socket_path=socket_path, handlers=build_capture_handlers(_manager(tmp_path))
-        )
-        await stale.start()
-        # Simulate an unclean shutdown: the listening socket goes away but
-        # the socket file is left behind on disk (stale.stop() is never
-        # called, so it never unlinks it).
-        assert stale._server is not None
-        stale._server.close()
-        await stale._server.wait_closed()
+        # Simulate a genuinely stale socket file — the shape a daemon
+        # killed with SIGKILL (no clean asyncio shutdown, so
+        # cleanup_socket's automatic unlink never runs) would leave
+        # behind: a real bound-and-abandoned AF_UNIX socket, with nothing
+        # listening on it anymore. Building this directly with the stdlib
+        # `socket` module (not through ControlServer at all) is the only
+        # way to leave a file behind that genuinely isn't backed by a
+        # live listener, since ControlServer's own start()/stop() cycle
+        # always cleans up after itself.
+        raw_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        raw_sock.bind(str(socket_path))
+        raw_sock.close()
+        assert socket_path.exists()
 
         fresh = ControlServer(
             socket_path=socket_path, handlers=build_capture_handlers(_manager(tmp_path))

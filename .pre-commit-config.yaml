@@ -1,0 +1,35 @@
+# Optional local pre-commit hooks mirroring this repo's four CI gates
+# (see CONTRIBUTING.md and .github/workflows/ci.yml). Not required —
+# CI is the actual enforcement backstop. Install with:
+#   pipx install pre-commit && pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check .
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: ruff-format
+        name: ruff format --check
+        entry: ruff format --check .
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: mypy
+        name: mypy --strict
+        entry: mypy --strict src/secondeye
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: pytest
+        name: pytest
+        entry: pytest -q
+        language: system
+        pass_filenames: false
+        types: [python]
+        stages: [pre-push]

@@ -1,5 +1,18 @@
 name: CI
 
+permissions:
+  contents: read
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+# Runs on every push to main and on pull requests. Given this repo's
+# established direct-push-to-main workflow, the push trigger is post-hoc
+# detection (it reports after a commit lands), not a pre-merge gate — if
+# blocking bad commits from reaching main is wanted, that requires moving
+# to a PR-based workflow with branch protection requiring this check,
+# which is a repo-settings decision outside this file's scope.
 on:
   push:
     branches: [main]
@@ -8,6 +21,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:

@@ -20,8 +20,10 @@ All 7 build phases in `SPEC.md` §14 are complete and passing:
 `capture/har.py` + plain-HTTP path → `recording/`, `analysis/`,
 `capture/buffer.py` → `daemon.py`, `cli.py`, `README.md`.
 
-Manual testing has passed. Coverage sits around 94% (floor is 80%, enforced via
-`pyproject.toml`'s `--cov-fail-under=80`).
+Manual testing has passed. Coverage sits around 95% (floor is 90%, enforced via
+`pyproject.toml`'s `--cov-fail-under=90`). CI (`.github/workflows/ci.yml`)
+runs all four gates — `ruff check`, `ruff format --check`, `mypy --strict`,
+`pytest` — on every push to `main`, across Python 3.11/3.12/3.13.
 
 Post-v1 additions (also reflected in `SPEC.md`, not just here):
 `-tf`/`--target-file` (v0.1.2) — line-delimited target list, an alternative

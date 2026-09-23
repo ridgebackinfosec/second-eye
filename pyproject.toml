@@ -37,8 +37,12 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "PTH", "S"]
 ignore = [
-    "S101",  # assert is idiomatic here: mypy type-narrowing in src/, and
-             # pytest itself requires assert in tests/ — not a security smell.
+    "S101",  # assert is idiomatic here: some src/ uses are mypy
+             # type-narrowing, others are runtime isinstance() checks on
+             # already-trusted internal data (the control socket is
+             # loopback-only and 0700, the JSONL buffer is this daemon's
+             # own prior output) — not validation of untrusted external
+             # input. pytest itself requires assert in tests/.
 ]
 
 [tool.ruff.lint.per-file-ignores]

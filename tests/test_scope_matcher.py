@@ -119,3 +119,54 @@ class TestNormalizeHostname:
         # Underscores are common in real-world internal hostnames but are not
         # valid per strict IDNA rules; normalization must not raise on them.
         assert normalize_hostname("Has_Underscore.example.com") == "has_underscore.example.com"
+
+
+class TestIpLiteralTargets:
+    def test_ip_literal_target_matches_exact_ip(self) -> None:
+        matcher = ScopeMatcher(targets=["10.0.0.5"])
+        result = matcher.match("10.0.0.5")
+        assert result.matched is True
+        assert result.matched_target == "10.0.0.5"
+
+    def test_ip_literal_target_does_not_match_unrelated_ip(self) -> None:
+        matcher = ScopeMatcher(targets=["10.0.0.5"])
+        assert matcher.match("10.0.0.6").matched is False
+
+    def test_domain_target_does_not_match_an_ip_literal_hostname(self) -> None:
+        matcher = ScopeMatcher(targets=["example.com"])
+        assert matcher.match("10.0.0.5").matched is False
+
+
+class TestControlCharacterAndEmptyInputs:
+    def test_null_byte_in_hostname_does_not_match_and_does_not_raise(self) -> None:
+        matcher = ScopeMatcher(targets=["example.com"])
+        result = matcher.match("exa\x00mple.com")
+        assert result.matched is False
+
+    def test_empty_hostname_against_nonempty_target_does_not_match(self) -> None:
+        matcher = ScopeMatcher(targets=["example.com"])
+        assert matcher.match("").matched is False
+
+    def test_empty_string_target_matches_only_empty_hostname(self) -> None:
+        # Documents current, correct behavior: an empty --target string
+        # (however it might arise — a blank line in a --target-file that
+        # somehow slipped past the comment/blank-line filter, or an
+        # operator typo) matches only an empty hostname, never a real one.
+        matcher = ScopeMatcher(targets=[""])
+        assert matcher.match("").matched is True
+        assert matcher.match("example.com").matched is False
+
+
+class TestBareWildcardTarget:
+    def test_bare_wildcard_target_matches_any_hostname(self) -> None:
+        # Documents current behavior, deliberately pinned rather than left
+        # implicit: a "*" target (reachable via a plain --target flag, not
+        # just --target-all) matches essentially any hostname, since
+        # fnmatch's "*" is not dot-aware and therefore isn't scoped to a
+        # single label. This is the single-target equivalent of
+        # --target-all and is worth a test precisely because it's
+        # security-relevant scope-widening behavior that should never
+        # change silently.
+        matcher = ScopeMatcher(targets=["*"])
+        assert matcher.match("anything.example.com").matched is True
+        assert matcher.match("totally-unrelated-domain.org").matched is True

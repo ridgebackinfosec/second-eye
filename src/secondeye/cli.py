@@ -177,10 +177,14 @@ def _build_parser() -> argparse.ArgumentParser:
     start.set_defaults(handler=_cmd_proxy_start)
 
     proxy_verbs.add_parser(
-        "stop", help="Stop a running secondeye daemon from another terminal."
+        "stop",
+        description="Stop a running secondeye daemon from another terminal.",
+        help="Stop a running secondeye daemon from another terminal.",
     ).set_defaults(handler=_cmd_proxy_stop)
     proxy_verbs.add_parser(
-        "status", help="Report whether a daemon is running, its scope, and active capture."
+        "status",
+        description="Report whether a daemon is running, its scope, and active capture.",
+        help="Report whether a daemon is running, its scope, and active capture.",
     ).set_defaults(handler=_cmd_proxy_status)
 
     capture = nouns.add_parser(
@@ -201,10 +205,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     capture_verbs.add_parser(
         "stop",
+        description="Stop the active capture and write raw.har/manifest.json/ANALYSIS.md.",
         help="Stop the active capture and write raw.har/manifest.json/ANALYSIS.md.",
     ).set_defaults(handler=_cmd_capture_stop)
     capture_verbs.add_parser(
-        "list", help="List captures completed so far during this daemon run."
+        "list",
+        description="List captures completed so far during this daemon run.",
+        help="List captures completed so far during this daemon run.",
     ).set_defaults(handler=_cmd_capture_list)
 
     ca = nouns.add_parser("ca", help="Manage secondeye's root CA and upstream trust.")

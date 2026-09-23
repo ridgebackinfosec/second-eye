@@ -2,6 +2,15 @@
 # (see CONTRIBUTING.md and .github/workflows/ci.yml). Not required —
 # CI is the actual enforcement backstop. Install with:
 #   pipx install pre-commit && pre-commit install
+# (default_install_hook_types below activates both the commit-time
+# hooks and the pre-push pytest hook from that one command — no extra
+# --hook-type flag needed).
+# These hooks run `language: system`, i.e. whatever ruff/mypy/pytest are
+# already on PATH — activate this repo's .venv (or otherwise have the
+# dev extras installed) before committing, or a hook fails with
+# "executable not found" rather than a real lint/type finding.
+minimum_pre_commit_version: '3.2.0'
+default_install_hook_types: [pre-commit, pre-push]
 repos:
   - repo: local
     hooks:
@@ -10,26 +19,26 @@ repos:
         entry: ruff check .
         language: system
         pass_filenames: false
-        types: [python]
+        files: ^(pyproject\.toml|.*\.py)$
 
       - id: ruff-format
         name: ruff format --check
         entry: ruff format --check .
         language: system
         pass_filenames: false
-        types: [python]
+        files: ^(pyproject\.toml|.*\.py)$
 
       - id: mypy
         name: mypy --strict
         entry: mypy --strict src/secondeye
         language: system
         pass_filenames: false
-        types: [python]
+        files: ^(pyproject\.toml|.*\.py)$
 
       - id: pytest
         name: pytest
         entry: pytest -q
         language: system
         pass_filenames: false
-        types: [python]
+        files: ^(pyproject\.toml|.*\.py)$
         stages: [pre-push]

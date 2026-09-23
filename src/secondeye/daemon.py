@@ -29,7 +29,7 @@ from secondeye.exceptions import ConfigError
 from secondeye.proxy.intercept import InterceptHandler
 from secondeye.proxy.listener import ProxyListener
 from secondeye.proxy.plain_http import PlainHttpHandler
-from secondeye.proxy.upstream import UpstreamConnector
+from secondeye.proxy.upstream import UpstreamConnector, validate_upstream_config
 from secondeye.recording.control import ControlServer, build_capture_handlers
 from secondeye.recording.manager import CaptureManager
 from secondeye.scope.matcher import ScopeMatcher
@@ -89,13 +89,15 @@ class Daemon:
 
         Raises:
             ConfigError: If --listen-address isn't loopback, upstream trust
-                flags are invalid (SPEC.md §2, raised by the relevant
-                component's own __init__, not duplicated here), or no scope
-                was configured at all (SPEC.md §2 marks --target "required
-                (at least one)"; -tf/--target-file, --target-regex, or
-                --target-all alone also satisfy this, since all are
-                legitimate alternative scope mechanisms per SPEC.md
-                §3.3/§3.4/§3.7).
+                flags are invalid (validated eagerly via
+                validate_upstream_config() before any CA/state-directory
+                work happens, so an invalid combination can't generate CA
+                material or log a misleading warning before failing), or
+                no scope was configured at all (SPEC.md §2 marks --target
+                "required (at least one)"; -tf/--target-file,
+                --target-regex, or --target-all alone also satisfy this,
+                since all are legitimate alternative scope mechanisms per
+                SPEC.md §3.3/§3.4/§3.7).
             ScopeConfigError: If a --target-regex pattern doesn't compile.
         """
         self._config = config
@@ -105,6 +107,16 @@ class Daemon:
             raise ConfigError(
                 "at least one --target, --target-file, or --target-regex is required "
                 "(or pass --target-all to bypass scope matching entirely)"
+            )
+
+        validate_upstream_config(
+            upstream_ca=config.upstream_ca,
+            upstream_insecure=config.upstream_insecure,
+            no_upstream=config.no_upstream,
+        )
+        if config.upstream_insecure:
+            logger.warning(
+                "--upstream-insecure set: TLS verification on the upstream leg is disabled"
             )
 
         self._scope_matcher = ScopeMatcher(
@@ -120,10 +132,6 @@ class Daemon:
             upstream_ca=config.upstream_ca,
             upstream_insecure=config.upstream_insecure,
         )
-        if config.upstream_insecure:
-            logger.warning(
-                "--upstream-insecure set: TLS verification on the upstream leg is disabled"
-            )
 
         self._capture_manager = CaptureManager(
             state_dir=config.state_dir,

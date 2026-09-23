@@ -49,7 +49,15 @@ against it, since both are deliberate and already known:
 
 ## Supported Versions
 
-Only the latest released version is supported. `secondeye` is distributed
-via `pipx install git+https://github.com/ridgebackinfosec/second-eye.git`
-(never published to PyPI, intentionally) — there is no LTS branch; running
-the latest commit on `main` is the supported configuration.
+`secondeye` is distributed via `pipx install
+git+https://github.com/ridgebackinfosec/second-eye.git` (never published
+to PyPI, intentionally) — there is no release/tag mechanism and no LTS
+branch. Running the latest commit on `main` is the only supported
+configuration.
+
+Two operational properties — unbounded in-memory body accumulation (no
+`--max-body-size` cap) and the blast radius of an `--upstream-proxy`
+misconfiguration — are known, intentional tradeoffs of this design and
+already documented in README's
+[Operational considerations](README.md#operational-considerations)
+section; please read that before filing a report about either.

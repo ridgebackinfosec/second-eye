@@ -257,3 +257,85 @@ class TestBuildManifest:
         assert scope["target_regex"] == ["^dev-.*"]
         assert scope["no_upstream"] is True
         assert scope["upstream"] is None
+
+
+class TestManifestSerializesRedirectAndPollingDetail:
+    def test_redirect_chain_serializes_hops_with_location_omitted_on_last_hop(self) -> None:
+        entries = [
+            _nav_entry(
+                _at(0), "https://example.com/dashboard", status=302, location="/dashboard/home"
+            ),
+            _nav_entry(_at(0.1), "https://example.com/dashboard/home", status=200),
+        ]
+        classified = classify_entries(entries)
+        flows = build_flows(classified)
+        manifest = build_manifest(
+            capture_name="redirect-test",
+            started_at=_at(0),
+            ended_at=_at(10),
+            targets=["example.com"],
+            target_regex=None,
+            target_all=False,
+            upstream=None,
+            no_upstream=True,
+            classified=classified,
+            flows=flows,
+        )
+
+        manifest_flows = manifest["flows"]
+        assert isinstance(manifest_flows, list)
+        assert len(manifest_flows) == 1
+        flow_dict = manifest_flows[0]
+        assert flow_dict["redirect_chain"] is True
+        assert flow_dict["redirect_hops"] == [
+            {
+                "har_entry_index": 0,
+                "url": "https://example.com/dashboard",
+                "status": 302,
+                "location": "/dashboard/home",
+            },
+            {
+                "har_entry_index": 1,
+                "url": "https://example.com/dashboard/home",
+                "status": 200,
+            },
+        ]
+        assert "polling_group" not in flow_dict
+        assert "collapsed_into" not in flow_dict
+
+    def test_polling_group_serializes_metadata_and_collapsed_occurrence_omits_it(self) -> None:
+        entries = [
+            _xhr_entry(_at(i * 30), "https://api.example.com/v2/notifications/poll")
+            for i in range(3)
+        ]
+        classified = classify_entries(entries)
+        flows = build_flows(classified)
+        manifest = build_manifest(
+            capture_name="polling-test",
+            started_at=_at(0),
+            ended_at=_at(100),
+            targets=["api.example.com"],
+            target_regex=None,
+            target_all=False,
+            upstream=None,
+            no_upstream=True,
+            classified=classified,
+            flows=flows,
+        )
+
+        manifest_flows = manifest["flows"]
+        assert isinstance(manifest_flows, list)
+        assert len(manifest_flows) == 3
+
+        first = manifest_flows[0]
+        assert first["polling_group"] == {
+            "occurrence_count": 3,
+            "interval_seconds": 30.0,
+            "collapsed_har_entry_indices": [1, 2],
+        }
+        assert "collapsed_into" not in first
+        assert "redirect_hops" not in first
+
+        second = manifest_flows[1]
+        assert second["collapsed_into"] == first["flow_id"]
+        assert "polling_group" not in second

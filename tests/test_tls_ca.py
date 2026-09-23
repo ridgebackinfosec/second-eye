@@ -1,7 +1,6 @@
 """Tests for secondeye.tls.ca (SPEC.md §5.2, §5.4, §14 Phase 2)."""
 
 import logging
-import os
 import shutil
 import stat
 import subprocess
@@ -93,7 +92,7 @@ class TestStateDirectoryPermissions:
         # directory was created with default umask permissions.
         state_dir = tmp_path / "state"
         state_dir.mkdir(mode=0o755)
-        os.chmod(state_dir, 0o755)  # mkdir's mode= is masked by umask; force it explicitly
+        state_dir.chmod(0o755)  # mkdir's mode= is masked by umask; force it explicitly
 
         load_or_create_ca(state_dir)
 
@@ -102,7 +101,7 @@ class TestStateDirectoryPermissions:
     def test_lockdown_runs_before_the_ca_is_created(self, tmp_path: Path) -> None:
         state_dir = tmp_path / "state"
         state_dir.mkdir(mode=0o500)
-        os.chmod(state_dir, 0o500)  # read+execute only: unwritable until tightened to 0700
+        state_dir.chmod(0o500)  # read+execute only: unwritable until tightened to 0700
 
         load_or_create_ca(state_dir)
 

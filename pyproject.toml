@@ -35,7 +35,29 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "ASYNC"]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "PTH", "S"]
+ignore = [
+    "S101",  # assert is idiomatic here: mypy type-narrowing in src/, and
+             # pytest itself requires assert in tests/ — not a security smell.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S603",  # subprocess calls throughout the test suite use fully
+             # test-controlled argv (invoking `secondeye.cli`, `curl`,
+             # `openssl` with hardcoded/test-local arguments), never
+             # untrusted input.
+    "S607",  # partial executable paths (`curl`, `openssl`) are
+             # intentional — tests skip via `shutil.which(...)` checks
+             # when the binary isn't on PATH, matching this repo's
+             # existing `_CURL_MISSING`/`_OPENSSL_MISSING` pattern.
+    "S104",  # every "0.0.0.0" literal in tests/ is a value passed to
+             # assert a security control (loopback-only binding)
+             # correctly REJECTS it — the opposite of a real finding.
+    "S103",  # test_tls_ca.py's one 0o755 chmod deliberately simulates a
+             # pre-v1.0.0 install's default-permission directory, to
+             # prove the daemon tightens it on startup (see Batch 1).
+]
 
 [tool.mypy]
 python_version = "3.11"

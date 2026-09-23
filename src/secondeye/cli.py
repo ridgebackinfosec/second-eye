@@ -83,6 +83,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "start",
         description="Start the secondeye daemon in the foreground. Stays running until "
         "Ctrl+C or 'secondeye proxy stop', auto-flushing any active capture on exit.",
+        help="Start the secondeye daemon in the foreground. Stays running until "
+        "Ctrl+C or 'secondeye proxy stop', auto-flushing any active capture on exit.",
     )
     start.add_argument(
         "--target",
@@ -193,7 +195,9 @@ def _build_parser() -> argparse.ArgumentParser:
     capture_verbs = capture.add_subparsers(dest="verb", required=True)
 
     cap_start = capture_verbs.add_parser(
-        "start", description="Start recording a named window of in-scope traffic."
+        "start",
+        description="Start recording a named window of in-scope traffic.",
+        help="Start recording a named window of in-scope traffic.",
     )
     cap_start.add_argument(
         "--name",
@@ -220,6 +224,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ca_export = ca_verbs.add_parser(
         "export",
         description="Export secondeye's root CA for import into a browser/device trust store.",
+        help="Export secondeye's root CA for import into a browser/device trust store.",
     )
     ca_export.add_argument(
         "--format",
@@ -233,11 +238,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "status",
         description="Report the persisted CA's fingerprint and validity, without "
         "generating one if none exists yet.",
+        help="Report the persisted CA's fingerprint and validity, without "
+        "generating one if none exists yet.",
     ).set_defaults(handler=_cmd_ca_status)
 
     ca_import = ca_verbs.add_parser(
         "import-upstream",
         description="Fetch an upstream intercepting proxy's CA certificate for use "
+        "with 'proxy start --upstream-ca'.",
+        help="Fetch an upstream intercepting proxy's CA certificate for use "
         "with 'proxy start --upstream-ca'.",
     )
     ca_import.add_argument(

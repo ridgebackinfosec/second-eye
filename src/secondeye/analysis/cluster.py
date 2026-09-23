@@ -60,11 +60,6 @@ class Cluster:
         self.members.append(classified)
         self._last_activity = classified.entry.started_at
 
-    @property
-    def all_entries(self) -> list[ClassifiedEntry]:
-        """The anchor followed by all members, in chronological order."""
-        return [self.anchor, *self.members]
-
 
 def _cluster_referer(anchor: ClassifiedEntry) -> str | None:
     if anchor.category == Category.NAVIGATION:

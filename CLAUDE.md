@@ -23,7 +23,9 @@ All 7 build phases in `SPEC.md` §14 are complete and passing:
 Manual testing has passed. Coverage sits around 95% (floor is 90%, enforced via
 `pyproject.toml`'s `--cov-fail-under=90`). CI (`.github/workflows/ci.yml`)
 runs all four gates — `ruff check`, `ruff format --check`, `mypy --strict`,
-`pytest` — on every push to `main`, across Python 3.11/3.12/3.13.
+`pytest` — on every push to `main`, across Python 3.11/3.12/3.13. An
+optional `.pre-commit-config.yaml` mirrors the same four gates as local
+git hooks (see `CONTRIBUTING.md`).
 
 `SECURITY.md`, `CHANGELOG.md`, and `CONTRIBUTING.md` now exist at the
 repo root (v1.0.0 readiness pass) — keep `CHANGELOG.md`'s `## Unreleased`
@@ -179,7 +181,9 @@ touching the affected area:
   (`CaptureAlreadyActiveError`, `CaptureNameConflictError`,
   `NoActiveCaptureError`) were added because §2's prose describes exactly
   these error conditions but §8's hierarchy — written from a proxy/TLS lens —
-  doesn't have a natural home for them.
+  doesn't have a natural home for them. (Since the v1.0.0 readiness pass,
+  `exceptions.py` also has one *fewer* class than §8's list — see the
+  last bullet in this section.)
 - **`proxy/_http_cycle.py`** isn't named in §13's module list. It holds the
   h11 request/response-cycle logic shared verbatim by `intercept.py` (TLS) and
   `plain_http.py` (cleartext) via a small `AsyncStream` protocol, rather than

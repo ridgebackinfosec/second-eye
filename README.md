@@ -323,10 +323,14 @@ asked for.
 
 ## Development
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full dev setup and
+contribution workflow. Quick reference:
+
 ```sh
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest
 ruff check .
+ruff format --check .
 mypy --strict src/secondeye
 ```

@@ -340,6 +340,50 @@ class TestStartupBanner:
             _stop_daemon_subprocess(second, _isolated_home)
 
 
+class TestUpstreamProxyDefaultPathWiring:
+    def test_default_upstream_proxy_flag_reaches_running_daemon(
+        self, _isolated_home: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        home = _isolated_home
+        stub_port = _free_port()
+        env = {**os.environ, "HOME": str(home)}
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "secondeye.cli",
+                "proxy",
+                "start",
+                "--target",
+                "example.com",
+                "--upstream-proxy",
+                f"127.0.0.1:{stub_port}",
+                "--upstream-insecure",
+                "--listen-address",
+                f"127.0.0.1:{_free_port()}",
+            ],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        socket_path = home / ".local" / "state" / "secondeye" / "control.sock"
+        try:
+            for _ in range(100):
+                if socket_path.exists():
+                    break
+                assert proc.poll() is None, proc.stderr.read() if proc.stderr else ""
+                time.sleep(0.05)
+            else:
+                pytest.fail("daemon did not create control socket in time")
+
+            code, out, _err = _run_cli(capsys, "proxy", "status")
+            assert code == 0
+            assert f"Upstream:       127.0.0.1:{stub_port}" in out
+        finally:
+            _stop_daemon_subprocess(proc, home)
+
+
 class TestTargetFile:
     def test_target_file_merges_into_scope_alongside_target_flag(
         self, tmp_path: Path, _isolated_home: Path, capsys: pytest.CaptureFixture[str]

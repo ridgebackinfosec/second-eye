@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime
-import importlib.metadata
 import logging
 import os
 import sys
@@ -28,6 +27,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.x509.oid import NameOID
 
+import secondeye
 from secondeye.daemon import Daemon, DaemonConfig
 from secondeye.exceptions import ConfigError, SecondEyeError, UpstreamConnectionError
 from secondeye.recording.control import ControlSocketUnavailableError, send_request
@@ -40,10 +40,7 @@ _DEFAULT_UPSTREAM = "127.0.0.1:8080"
 _DEFAULT_LISTEN_PORT = 8079
 _DEFAULT_UPSTREAM_PORT = 8080
 
-try:
-    _VERSION = importlib.metadata.version("second-eye")
-except importlib.metadata.PackageNotFoundError:
-    _VERSION = "unknown"
+_VERSION = secondeye.__version__
 
 
 def main(argv: list[str] | None = None) -> int:

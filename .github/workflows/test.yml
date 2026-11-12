@@ -124,6 +124,23 @@ jobs:
       - name: Test imports
         run: python -c "import secondeye; print(secondeye.__version__)"
 
+      # rich is a docs-tooling dependency in the dev extra, used only by
+      # scripts/generate_doc_examples.py to wrap a captured terminal session
+      # as an SVG. A dev extra that quietly leaks into runtime deps is exactly
+      # the kind of thing nobody notices until a user in a constrained
+      # environment reports it, so prove it isn't installed alongside the
+      # wheel. Same check applies to any future docs-only library.
+      - name: Assert docs tooling did not leak into runtime deps
+        run: |
+          python - <<'PY'
+          import importlib.util, sys
+          leaked = [n for n in ("rich",) if importlib.util.find_spec(n) is not None]
+          if leaked:
+              print(f"ERROR: docs-only package(s) installed with the wheel: {leaked}")
+              sys.exit(1)
+          print("OK: no docs-only packages pulled in by the wheel")
+          PY
+
       - name: Smoke test CLI
         run: |
           secondeye --version

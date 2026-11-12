@@ -1,6 +1,6 @@
 [project]
 name = "second-eye"
-version = "1.0.2"
+version = "1.0.3"
 description = "Scope-gated recording proxy for offensive security engagements"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -53,6 +53,12 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6",
     "mypy>=1.11",
+    # Docs tooling only: scripts/generate_doc_examples.py uses it to wrap a
+    # captured terminal session as an SVG for README.md. It is deliberately
+    # NOT a runtime dependency — nothing under src/secondeye imports rich, the
+    # program's own output is plain print(), and the test-package CI job
+    # asserts rich never reaches the built wheel.
+    "rich>=13.0,<15.0",
 ]
 
 [project.scripts]
@@ -105,3 +111,7 @@ strict = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = "--cov=secondeye --cov-report=term-missing --cov-fail-under=90"
+markers = [
+    "slow: takes appreciably longer than a unit test (subprocess, real I/O).",
+    "integration: exercises several components together, not one in isolation.",
+]

@@ -49,6 +49,19 @@ CI is four files:
 An optional `.pre-commit-config.yaml` mirrors the same four gates as local
 git hooks (see `CONTRIBUTING.md`).
 
+**Documentation examples are generated, not written.** Every command output,
+terminal screen and CLI help block in `README.md` and `docs/` is captured from
+the real renderers by `scripts/generate_doc_examples.py` and lives between
+`<!-- BEGIN GENERATED: name -->` / `<!-- END GENERATED: name -->` markers.
+`tests/test_doc_examples.py` fails when the committed output is stale. Twelve
+examples, in two tiers: fixture-driven ones (`ANALYSIS.md`, `manifest.json`,
+CLI help) that are pure functions over
+`tests/fixtures/demo_capture/raw.har`, and live ones (startup banner,
+`proxy status`, capture summary, the SVG hero) that drive a real daemon in a
+throwaway `HOME` against a local origin on pinned ports. `rich` is a `dev`-extra
+dependency used only for the SVG; the `test-package` CI job asserts it never
+reaches the wheel.
+
 `CHANGELOG.md` uses Keep a Changelog's bracketed headings
 (`## [X.Y.Z] - YYYY-MM-DD`, `## [Unreleased]`) — `scripts/extract_changelog.py`
 matches on that exact form, date included, so a release fails loudly if a
@@ -294,6 +307,16 @@ generic workflow template will reach for all three:
   A soft-failed gate reports green for something that doesn't work. (The
   two soft-failed checks that *do* exist — `pip-audit` in `security.yml` —
   each carry an in-file comment saying why and what would make them hard.)
+- **Hand-editing anything between `BEGIN GENERATED` / `END GENERATED`
+  markers.** The obvious "fix" for a stale doc block is to type the correct
+  text into it; that is always wrong here. The block is overwritten on the
+  next generator run and the drift test will flag it. Change the renderer or
+  the capture function in `scripts/generate_doc_examples.py`, then re-run
+  `python scripts/generate_doc_examples.py`.
+- **Making `rich` (or any docs-only library) a runtime dependency**, or
+  importing it from `src/secondeye`. The program's output is plain `print()`
+  and stays that way — routing it through `rich` to get prettier docs would
+  change what users see in order to change what readers see.
 - **A bandit job in `security.yml`.** Bandit's checks already run as a
   *hard* gate via ruff's `S` rule family over the whole tree, with every
   suppression justified in `pyproject.toml`. A second soft-failed bandit

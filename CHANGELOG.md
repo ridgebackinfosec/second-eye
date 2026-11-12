@@ -5,6 +5,36 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-11-12
+
+### Added
+- **The README now shows what the tool actually produces.** New generated
+  examples: an `ANALYSIS.md` excerpt (summary, auth mechanisms, status
+  rollup, parameter names, security-header audit, cookie-flag issues), the
+  matching `manifest.json`, a terminal SVG of a full capture session, and
+  `proxy status` / capture-summary output with real request counts.
+- `docs/CLI.md` — a complete flag reference for every subcommand, captured
+  from the real argument parser. Replaces the hand-written five-flag list the
+  README used to carry, which nothing verified.
+- `docs/examples/ANALYSIS.sample.md` — a complete worked `ANALYSIS.md`, so
+  the format can be judged before running a capture.
+- `scripts/generate_doc_examples.py` plus `tests/test_doc_examples.py`: every
+  command output and help block in the docs is captured from the real
+  renderers and verified on every test run, so documentation can no longer
+  drift from the program without the suite going red. Run
+  `python scripts/generate_doc_examples.py` after changing anything a reader
+  sees.
+- `src/secondeye/py.typed` — the package now advertises its inline type hints
+  (PEP 561), so `mypy` checks downstream code against them instead of
+  treating `secondeye` as untyped.
+
+### Changed
+- `rich` added to the `dev` extra as docs tooling, used only to render the
+  README's terminal SVG. It is deliberately not a runtime dependency: nothing
+  in the package imports it, and the `test-package` CI job now fails if it
+  ever appears alongside the installed wheel.
+- Registered the `slow` and `integration` pytest markers.
+
 ## [1.0.2] - 2026-11-12
 
 ### Added

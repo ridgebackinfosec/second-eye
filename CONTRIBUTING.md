@@ -72,6 +72,45 @@ installed distribution's metadata via `secondeye.__version__` — don't add
 a version literal anywhere else; `tests/test_version.py` fails if one
 drifts in.
 
+## Documentation examples are generated
+
+Every command output, terminal screen and CLI help block in `README.md` and
+`docs/` is captured from the real code by
+`scripts/generate_doc_examples.py` — never hand-written, never a screenshot.
+Hand-pasted output rots silently: nothing fails when it drifts, so it stays
+wrong until someone follows a README that no longer matches the program.
+
+```sh
+python scripts/generate_doc_examples.py              # regenerate everything
+python scripts/generate_doc_examples.py --check      # non-zero on drift (what CI runs)
+python scripts/generate_doc_examples.py --only NAME  # iterate on one example
+```
+
+**Never hand-edit between `<!-- BEGIN GENERATED: name -->` and
+`<!-- END GENERATED: name -->`.** Change the renderer, or the capture function
+in the generator, and re-run it. The prose around the markers is hand-owned and
+safe to edit. `tests/test_doc_examples.py` fails if the committed output is
+stale, and names the command that fixes it.
+
+If you change anything a reader sees — a flag's help text, the startup banner,
+`ANALYSIS.md`'s layout — regenerate in the same commit. A dirty tree after
+regenerating means the docs were about to ship stale; commit the regenerated
+output with your change rather than reverting it.
+
+Two things the examples depend on:
+
+- `tests/fixtures/demo_capture/raw.har`, a synthetic capture that the
+  `ANALYSIS.md` and `manifest.json` examples are rendered from. Its
+  credential-shaped values are deliberately obvious fakes, because this tool
+  renders credential findings **unredacted** by design (`SPEC.md` §0) — a
+  realistic-looking token in the fixture would appear verbatim in the
+  committed README.
+- `rich`, in the `dev` extra only. It is used solely to wrap a captured
+  terminal session as an SVG. Nothing under `src/secondeye` imports it, the
+  program's own output is plain `print()`, and the `test-package` CI job
+  asserts it never reaches the built wheel. Any future docs-only library
+  follows the same rule.
+
 ## Testing conventions
 
 This repo overwhelmingly tests against **real sockets, real TLS

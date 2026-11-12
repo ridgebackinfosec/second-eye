@@ -3,9 +3,59 @@
 All notable changes to this project are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## [Unreleased]
 
-## 1.0.1 - 2026-09-23
+## [1.0.2] - 2026-11-12
+
+### Added
+- Security scanning (`.github/workflows/security.yml`): CodeQL with the
+  `security-extended` query suite as a blocking check, plus a
+  soft-failed `pip-audit` dependency audit that uploads a report. Both
+  run on every push and pull request and on a weekly Monday cron, so a
+  newly-published advisory against an unchanged dependency surfaces
+  without needing a commit to trigger it.
+- Dependency automation (`.github/dependabot.yml`): monthly `pip` and
+  `github-actions` updates targeting `develop`. The dev toolchain
+  (pytest, ruff, mypy) batches into one pull request; the four runtime
+  dependencies stay individual, since each needs its own smoke test.
+- Packaging verification (the `test-package` job in
+  `.github/workflows/test.yml`): builds the wheel, asserts the
+  `secondeye` package is actually inside it, installs from that
+  artifact into a clean environment, and smoke-tests `secondeye
+  --version` and `--help`. Catches the class of bug where the test
+  suite passes but the installed artifact is broken.
+
+### Changed
+- **Contributions now target `develop`, not `main`.** `main` is the
+  release branch, updated only by a `develop` → `main` pull request. If
+  you have an open pull request against `main`, retarget it. CI gates
+  both branches, so `develop` is checked before a release PR is ever
+  opened. See `CONTRIBUTING.md`'s new "Branching" section.
+- `CHANGELOG.md` headings now use Keep a Changelog's bracketed form
+  (`## [X.Y.Z] - YYYY-MM-DD`, `## [Unreleased]`). Release notes are
+  extracted by the new `scripts/extract_changelog.py`, which matches on
+  that exact form — a version bump whose changelog heading is malformed
+  or undated now fails the release with a message listing the versions
+  it did find.
+- CI split from the single `ci.yml` into `test.yml` (the four gates,
+  now also type-checking `scripts/`) and `release.yml`. The release
+  trigger is narrower and better-validated: it fires only on a `main`
+  push that touches `pyproject.toml`, diffs the version against the
+  previous commit, rejects anything that isn't plain semver `X.Y.Z`, and
+  attaches the built sdist and wheel to the GitHub Release. The previous
+  job's idempotency guard is retained, so a re-run won't double-tag.
+  Still no PyPI publish — that remains deliberate.
+
+### Fixed
+- `raw.har`'s `log.creator.version` reported `1.0.1` regardless of the
+  version actually installed: `recording/manager.py` carried a hardcoded
+  literal that nothing updated on a version bump. It now resolves from
+  the installed distribution's metadata via the new
+  `secondeye.__version__`, which `secondeye --version` also uses, making
+  `pyproject.toml`'s `project.version` the single source of truth.
+  `tests/test_version.py` fails if a version literal drifts back in.
+
+## [1.0.1] - 2026-09-23
 
 ### Added
 - A `tag-release` CI job (`.github/workflows/ci.yml`) that auto-tags and
@@ -16,7 +66,7 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   to run on every push regardless of whether that push touched the
   version. Replaces manual tagging going forward.
 
-## 1.0.0 - 2026-09-23
+## [1.0.0] - 2026-09-23
 
 ### Added
 - `pyproject.toml` metadata completion: `readme`, `authors`,
@@ -64,7 +114,7 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A stale-control-socket-recovery test that didn't actually exercise the
   recovery code path it claimed to.
 
-## 0.7.0 - 2026-09-21
+## [0.7.0] - 2026-09-21
 
 ### Added
 - ANALYSIS.md Phase 3 heavier signals: framework debug/error-page
@@ -77,7 +127,7 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Set-Cookie` flag audit); cross-request ID-value reuse detection; and
   a capture-wide Mermaid `## Sequence Diagram` section.
 
-## 0.6.0 - 2026-09-21
+## [0.6.0] - 2026-09-21
 
 ### Added
 - ANALYSIS.md Phase 2 orientation block: a classification-confidence
@@ -85,7 +135,7 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `## Summary` section (endpoints touched, auth mechanisms observed, a
   status-code rollup, parameter names observed — never values).
 
-## 0.5.0 - 2026-09-21
+## [0.5.0] - 2026-09-21
 
 ### Added
 - ANALYSIS.md Phase 1 derived signals: timing/size outlier notes,
@@ -93,7 +143,7 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `## Capture Signals` section, a linked `## Contents` table of
   contents, and state-changing-method highlighting.
 
-## 0.4.0 - 2026-09-17
+## [0.4.0] - 2026-09-17
 
 ### Added
 - `secondeye --version`/`-V`; `proxy status` reports a live request
@@ -106,24 +156,24 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   git+https://github.com/ridgebackinfosec/second-eye.git` (never
   published to PyPI, intentionally).
 
-## 0.3.2 - 2026-09-17
+## [0.3.2] - 2026-09-17
 
 ### Changed
 - Updated the README hero banner artwork.
 
-## 0.3.1 - 2026-09-17
+## [0.3.1] - 2026-09-17
 
 ### Added
 - A hero banner image to the README.
 
-## 0.3.0 - 2026-09-16
+## [0.3.0] - 2026-09-16
 
 ### Added
 - A `proxy start` startup banner (scope/listen/upstream summary + next
   step); colorized `✓`/`✗` output (respecting `NO_COLOR` and non-tty
   streams); `argcomplete`-based shell completion.
 
-## 0.2.0 - 2026-09-16
+## [0.2.0] - 2026-09-16
 
 ### Added
 - A second-instance guard (refuses to steal a running daemon's control
@@ -134,18 +184,18 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--capture-all`→`--target-all` (the latter renamed all the way through
   internal code and `manifest.json`'s schema key).
 
-## 0.1.2 - 2026-09-16
+## [0.1.2] - 2026-09-16
 
 ### Added
 - `-tf`/`--target-file`: a line-delimited target list, an alternative to
   repeating `--target`.
 
-## 0.1.1 - 2026-09-16
+## [0.1.1] - 2026-09-16
 
 ### Changed
 - Moved architecture flow diagrams to `docs/ARCHITECTURE.md`.
 
-## 0.1.0 - 2026-09-16
+## [0.1.0] - 2026-09-16
 
 ### Added
 - Initial release: all 7 core build phases — scope matching, TLS CA/leaf

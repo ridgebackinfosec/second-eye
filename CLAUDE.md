@@ -23,15 +23,44 @@ shipped 2026-09-23 — see `CHANGELOG.md` for the full readiness-pass
 changelog.
 
 Manual testing has passed. Coverage sits around 95% (floor is 90%, enforced via
-`pyproject.toml`'s `--cov-fail-under=90`). CI (`.github/workflows/ci.yml`)
-runs all four gates — `ruff check`, `ruff format --check`, `mypy --strict`,
-`pytest` — on every push to `main`, across Python 3.11/3.12/3.13. An
-optional `.pre-commit-config.yaml` mirrors the same four gates as local
-git hooks (see `CONTRIBUTING.md`). A push to `main` that bumps
-`pyproject.toml`'s `version` is auto-tagged (`vX.Y.Z`) and published as
-a GitHub Release once those four gates pass (`tag-release` job in
-`ci.yml`), with release notes pulled from `CHANGELOG.md`'s matching
-section.
+`pyproject.toml`'s `--cov-fail-under=90`).
+
+**Branching: work lands on `develop`; `main` is the release branch.** Never
+push, commit, or merge to `main` — it is only updated by a `develop` → `main`
+pull request, and tags are never created by hand (Actions owns tagging).
+
+CI is four files:
+
+- `.github/workflows/test.yml` — all four gates (`ruff check`,
+  `ruff format --check`, `mypy --strict src/secondeye scripts`, `pytest`)
+  across Python 3.11/3.12/3.13, plus a `test-package` job that builds the
+  wheel, installs from it, and smoke-tests `secondeye --version`/`--help`.
+  Runs on push and PR against both `main` and `develop`.
+- `.github/workflows/release.yml` — fires on a push to `main` that touches
+  `pyproject.toml`, diffs the version against `HEAD^`, validates plain
+  semver, extracts release notes via `scripts/extract_changelog.py`, builds,
+  tags `vX.Y.Z`, and publishes a GitHub Release with the artifacts attached.
+  No PyPI publish, by design.
+- `.github/workflows/security.yml` — CodeQL (`security-extended`) as a hard
+  gate; `pip-audit` soft-failed with a report artifact; weekly Monday cron.
+- `.github/dependabot.yml` — monthly `pip` and `github-actions` updates
+  targeting `develop`, dev toolchain grouped, runtime deps individual.
+
+An optional `.pre-commit-config.yaml` mirrors the same four gates as local
+git hooks (see `CONTRIBUTING.md`).
+
+`CHANGELOG.md` uses Keep a Changelog's bracketed headings
+(`## [X.Y.Z] - YYYY-MM-DD`, `## [Unreleased]`) — `scripts/extract_changelog.py`
+matches on that exact form, date included, so a release fails loudly if a
+heading is malformed.
+
+**The version is declared in exactly one place**: `pyproject.toml`'s
+`project.version`. `src/secondeye/__init__.py` resolves it at runtime from
+the installed distribution metadata as `__version__`; `cli.py`'s `_VERSION`
+and `recording/manager.py`'s `_CREATOR_VERSION` (which lands in every
+`raw.har`'s `log.creator.version`) both read it from there. Never add a
+version literal anywhere else — `tests/test_version.py` fails if one drifts
+in.
 
 `SECURITY.md`, `CHANGELOG.md`, and `CONTRIBUTING.md` now exist at the
 repo root (v1.0.0 readiness pass) — keep `CHANGELOG.md`'s `## Unreleased`
@@ -253,6 +282,24 @@ agentic tool will "helpfully" reach for these — don't:
 - Multi-session/nested capture support (one active capture, hard error
   otherwise).
 - Remote/non-loopback binding (no override flag exists, by design).
+
+Three CI-specific ones, for the same reason — an agentic tool porting a
+generic workflow template will reach for all three:
+
+- **`windows-latest`/`macos-latest` matrix cells in `test.yml`.** Linux
+  only; a matrix cell for either would assert support that was never
+  intended.
+- **`continue-on-error` on any of the four gates.** They have been hard
+  gates since the first commit and the tree is clean against all of them.
+  A soft-failed gate reports green for something that doesn't work. (The
+  two soft-failed checks that *do* exist — `pip-audit` in `security.yml` —
+  each carry an in-file comment saying why and what would make them hard.)
+- **A bandit job in `security.yml`.** Bandit's checks already run as a
+  *hard* gate via ruff's `S` rule family over the whole tree, with every
+  suppression justified in `pyproject.toml`. A second soft-failed bandit
+  pass would be strictly weaker and duplicate its findings as
+  non-blocking noise. `security.yml` says this in a comment; don't delete
+  it and "fill the gap."
 
 ## Where a v2 might go (explicitly out of scope for this repo, per SPEC.md)
 

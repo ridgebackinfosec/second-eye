@@ -14,14 +14,14 @@ pip install -e ".[dev]"
 
 Every change must pass all four of these, clean, before it's considered
 done — this is the same bar the project has held since it was first
-built, and the same one CI (`.github/workflows/ci.yml`) now enforces on
-every push to `main` and on every pull request:
+built, and the same one CI (`.github/workflows/test.yml`) now enforces on
+every push and pull request against `main` *and* `develop`:
 
 ```sh
-pytest -q                       # full test suite, coverage enforced (floor: 90%)
-ruff check .                    # lint
-ruff format --check .           # formatting
-mypy --strict src/secondeye     # type check
+pytest -q                            # full test suite, coverage enforced (floor: 90%)
+ruff check .                         # lint
+ruff format --check .                # formatting
+mypy --strict src/secondeye scripts  # type check
 ```
 
 Run `ruff format .` (without `--check`) to auto-fix formatting issues
@@ -33,15 +33,44 @@ pre-commit && pre-commit install`. It runs whatever `ruff`/`mypy`/
 `pytest` are on `PATH`, so activate this repo's `.venv` (or otherwise
 have the dev extras installed) before committing.
 
-A push to `main` that bumps `version` in `pyproject.toml` is
-automatically tagged and released on GitHub (the `tag-release` job in
-`.github/workflows/ci.yml`, gated on the four gates passing first). Its
-release notes are pulled verbatim from `CHANGELOG.md`'s matching
-`## X.Y.Z - YYYY-MM-DD` section — so a version bump without a matching
-`CHANGELOG.md` entry fails that job loudly rather than publishing an
-empty release. Bumping the version and adding its `CHANGELOG.md` entry
-in the same change (already asked of every contributor above) is what
-makes this automatic.
+Two more workflows run alongside it:
+`.github/workflows/security.yml` (CodeQL as a blocking check; `pip-audit`
+soft-failed, since a new advisory against a transitive dependency usually
+can't be fixed in whatever pull request happens to be open) and
+`.github/workflows/release.yml` (see below).
+
+## Branching
+
+- **`develop` is where work lands.** Branch from it, open pull requests
+  against it.
+- **`main` is the release branch.** It is only ever updated by a
+  `develop` → `main` pull request; nothing is pushed to it directly, and
+  tags are never created by hand.
+
+## Releases
+
+A push to `main` that changes `version` in `pyproject.toml` is
+automatically tagged and published as a GitHub Release
+(`.github/workflows/release.yml`). The version bump *is* the release
+signal — there's no tag trigger and no manual dispatch. The job validates
+that the new version is plain semver (`X.Y.Z`, no `v` prefix and no
+pre-release suffix), builds the sdist and wheel, and attaches them to the
+release. Nothing is published to PyPI; that's intentional (install is
+`pipx install git+https://github.com/ridgebackinfosec/second-eye.git`).
+
+Release notes are pulled verbatim from `CHANGELOG.md`'s matching
+`## [X.Y.Z] - YYYY-MM-DD` section by `scripts/extract_changelog.py` — so a
+version bump without a matching `CHANGELOG.md` entry (or with the date
+missing from the heading) fails that job loudly rather than publishing an
+empty release. Bumping the version and adding its `CHANGELOG.md` entry in
+the same change (already asked of every contributor above) is what makes
+this automatic.
+
+The version is declared in exactly one place, `pyproject.toml`'s
+`project.version`. Everything that reports a version reads it from the
+installed distribution's metadata via `secondeye.__version__` — don't add
+a version literal anywhere else; `tests/test_version.py` fails if one
+drifts in.
 
 ## Testing conventions
 
@@ -84,9 +113,10 @@ possible, and by review where not.
 
 ## Submitting a change
 
-Fork the repo, create a branch, and open a pull request against `main`.
+Fork the repo, create a branch off `develop`, and open a pull request
+against `develop` (not `main` — see "Branching" above).
 CI runs the four gates automatically on every pull request. If your
-change is user-visible, add an entry under `## Unreleased` in
+change is user-visible, add an entry under `## [Unreleased]` in
 `CHANGELOG.md` — see its existing entries for the expected level of
 detail (a sentence or two from a user's perspective, not a commit-message
 dump).

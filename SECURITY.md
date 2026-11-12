@@ -51,9 +51,10 @@ against it, since both are deliberate and already known:
 
 `secondeye` is distributed via `pipx install
 git+https://github.com/ridgebackinfosec/second-eye.git` (never published
-to PyPI, intentionally) — there is no release/tag mechanism and no LTS
-branch. Running the latest commit on `main` is the only supported
-configuration.
+to PyPI, intentionally). Versions are tagged and published as GitHub
+Releases, but there is no LTS branch and no backporting: fixes land on
+`develop` and reach `main` in the next release. Running the latest commit
+on `main` is the only supported configuration.
 
 Two operational properties — unbounded in-memory body accumulation (no
 `--max-body-size` cap) and the blast radius of an `--upstream-proxy`

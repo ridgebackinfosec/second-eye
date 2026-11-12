@@ -23,6 +23,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+import secondeye
 from secondeye.analysis.classify import classify_entries
 from secondeye.analysis.manifest import build_flows, build_manifest
 from secondeye.analysis.render import render_analysis_md
@@ -40,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 _HAR_VERSION = "1.2"
 _CREATOR_NAME = "secondeye"
-_CREATOR_VERSION = "1.0.1"
+_CREATOR_VERSION = secondeye.__version__
 _BUFFER_FILENAME = ".buffer.jsonl"
 
 

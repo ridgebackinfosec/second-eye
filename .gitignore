@@ -8,6 +8,12 @@ __pycache__/
 .venv/
 venv/
 
+# Build + release artifacts (produced by `python -m build` and by
+# scripts/extract_changelog.py in .github/workflows/release.yml)
+build/
+dist/
+release_notes.md
+
 # Test/lint/type-check artifacts
 .pytest_cache/
 .mypy_cache/

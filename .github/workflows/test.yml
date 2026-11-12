@@ -1,0 +1,136 @@
+name: Tests
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+# All work lands on `develop`; `main` is the release branch, reached only
+# via a develop -> main pull request. Both branches are gated here, so a
+# change is checked when it lands on develop and again on the release PR —
+# the PR trigger is the pre-merge gate (make it a required check in the
+# repo's branch-protection settings for it to actually block a merge; that
+# is a repo-settings decision outside this file's scope).
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  # Linux-only by design: Windows and macOS support are explicit
+  # non-goals for this project (SPEC.md §0), so a matrix cell for either
+  # would assert support that was never intended.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      # No continue-on-error anywhere in this workflow: every Python
+      # version in the matrix is a supported version (see pyproject.toml's
+      # classifiers), and this project has held all four gates clean since
+      # its first commit. A soft-failed cell would report green for a
+      # version that does not actually work.
+      #
+      # --cov/--cov-report=term-missing and the 90% coverage floor come
+      # from pyproject.toml's addopts; only the XML report is added here,
+      # for the artifact upload below.
+      - name: pytest
+        run: pytest -q --cov-report=xml
+
+      - name: Archive coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-ubuntu-${{ matrix.python-version }}
+          path: coverage.xml
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: ruff check
+        run: ruff check .
+
+      # Hard gate: the tree is fully formatted, so any drift is a real
+      # regression. `ruff format` (not black) is this repo's formatter.
+      - name: ruff format --check
+        run: ruff format --check .
+
+      # Hard gate, not the soft one a partially-typed codebase would need:
+      # this tree is mypy --strict clean and stays that way.
+      - name: mypy --strict
+        run: mypy --strict src/secondeye scripts
+
+  # This job exists because packaging config silently omits subpackages and
+  # data files; only an install-from-artifact catches it. It also proves
+  # end-to-end that `__version__` resolves from installed distribution
+  # metadata rather than a literal in the source tree.
+  test-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # `build` is intentionally not in pyproject.toml's dev extras: it is
+      # release/CI tooling, not something a contributor needs to run the
+      # four gates locally.
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Inspect package contents
+        run: |
+          unzip -l dist/*.whl | grep "secondeye/__init__.py" \
+            || (echo "ERROR: secondeye not found in wheel!" && exit 1)
+
+      - name: Install from wheel
+        run: pip install dist/*.whl
+
+      - name: Test imports
+        run: python -c "import secondeye; print(secondeye.__version__)"
+
+      - name: Smoke test CLI
+        run: |
+          secondeye --version
+          secondeye --help
+
+      - name: Upload built packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-packages
+          path: dist/

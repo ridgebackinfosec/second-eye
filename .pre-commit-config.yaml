@@ -1,5 +1,5 @@
 # Optional local pre-commit hooks mirroring this repo's four CI gates
-# (see CONTRIBUTING.md and .github/workflows/ci.yml). Not required —
+# (see CONTRIBUTING.md and .github/workflows/test.yml). Not required —
 # CI is the actual enforcement backstop. Install with:
 #   pipx install pre-commit && pre-commit install
 # (default_install_hook_types below activates both the commit-time
@@ -30,7 +30,7 @@ repos:
 
       - id: mypy
         name: mypy --strict
-        entry: mypy --strict src/secondeye
+        entry: mypy --strict src/secondeye scripts
         language: system
         pass_filenames: false
         files: ^(pyproject\.toml|.*\.py)$

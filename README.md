@@ -31,6 +31,14 @@ traffic — packaged for handoff to an AI chat (corporate-agreement AI or in-hou
 LLM) for flow analysis — without giving up the ability to chain through a
 traditional interception proxy for manual testing.
 
+<!-- BEGIN GENERATED: hero -->
+<img src="docs/images/examples/hero.svg" alt="secondeye terminal session">
+<!-- END GENERATED: hero -->
+
+*A full session: start the daemon, record a labeled window of in-scope traffic,
+stop. Recorded from a real run — see [Checking on a running
+capture](#checking-on-a-running-capture) for the same output as text.*
+
 Author context: Ridgeback InfoSec LLC — offensive security training/consulting
 tooling. License: MIT. **Platform: Linux only** (v1); macOS may work incidentally
 but is untested/unsupported, and there is no Windows support planned.
@@ -216,6 +224,161 @@ beyond what the narrative captured — each flow in `ANALYSIS.md` carries a
 `manifest.json` is the structured/machine-readable form, meant for your own future
 tooling rather than routine AI handoff.
 
+### What `ANALYSIS.md` looks like
+
+The excerpt below is the real output of a capture against a demo target — the
+header block, the orientation `## Summary`, and the `## Capture Signals` audit.
+Below these sections the document continues with a Mermaid sequence diagram, a
+table of contents, and one narrative section per flow.
+
+<!-- BEGIN GENERATED: analysis-excerpt -->
+```markdown
+# Second-Eye Capture Analysis
+
+**Capture:** auth-flow-test
+**Target(s):** app.example-corp.com
+**Capture window:** 2026-03-14T09:15:00Z → 2026-03-14T09:16:30Z
+**Total requests:** 13 (3 navigation, 8 xhr-api, 2 static-asset)
+**Full fidelity data:** raw.har (this document is a derived summary)
+
+---
+
+## Summary
+
+*Counts below exclude static-asset requests.*
+
+**Endpoints touched:**
+- **GET** /login
+- **POST** *(state-changing)* /login
+- **GET** /dashboard
+- **GET** /api/v2/users/4815/profile
+- **GET** /api/v2/reports
+- **POST** *(state-changing)* /api/v2/reports
+- **GET** /api/v2/admin/audit-log
+- **GET** /api/v2/notifications
+- **GET** /api/v2/reports/9001/export
+
+**Auth mechanisms observed:**
+- Bearer token: 8 request(s)
+- session cookie: 9 request(s)
+
+**Status codes:** 8x 200, 1x 201, 1x 302, 1x 403
+
+**Parameter names observed:** `user_id` (query, 1x), `org_id` (query, 2x), `limit` (query, 1x), `since` (query, 3x), `format` (query, 1x), `title` (body, 1x), `owner_id` (body, 1x)
+
+## Capture Signals
+
+**Security headers observed:**
+- Strict-Transport-Security: present on 0/11 responses
+- Content-Security-Policy: present on 0/11 responses
+- X-Frame-Options: present on 1/11 responses
+- X-Content-Type-Options: present on 2/11 responses
+- X-XSS-Protection: present on 0/11 responses
+- Referrer-Policy: present on 0/11 responses
+- Permissions-Policy: present on 0/11 responses
+
+**Stack fingerprint hints:**
+- `nginx` (Server header)
+
+**Cookie flag issues:**
+- `session`: missing Secure, SameSite (entry #3)
+```
+<!-- END GENERATED: analysis-excerpt -->
+
+See [docs/examples/ANALYSIS.sample.md](docs/examples/ANALYSIS.sample.md) for the
+complete document this excerpt came from, including the per-flow narrative,
+redirect-chain detail, polling-group collapsing, and timing-outlier notes.
+
+<details>
+<summary><code>manifest.json</code> for the same capture (flows truncated to one)</summary>
+
+<!-- BEGIN GENERATED: manifest-excerpt -->
+```json
+{
+  "schema_version": "1.0",
+  "capture": {
+    "name": "auth-flow-test",
+    "started_at": "2026-03-14T09:15:00Z",
+    "ended_at": "2026-03-14T09:16:30Z",
+    "duration_ms": 90000.0
+  },
+  "scope": {
+    "targets": [
+      "app.example-corp.com"
+    ],
+    "target_regex": [],
+    "target_all": false,
+    "upstream": null,
+    "no_upstream": true
+  },
+  "stats": {
+    "total_requests": 13,
+    "by_category": {
+      "navigation": 3,
+      "xhr-api": 8,
+      "static-asset": 2,
+      "other": 0
+    },
+    "total_bytes_transferred": 1690,
+    "domains_seen": [
+      "app.example-corp.com"
+    ]
+  },
+  "flows": [
+    {
+      "flow_id": 1,
+      "started_at": "2026-03-14T09:15:00Z",
+      "category": "navigation",
+      "har_entry_indices": [
+        0
+      ],
+      "redirect_chain": false,
+      "summary": "GET /login \u2192 200"
+    }
+  ]
+}
+```
+<!-- END GENERATED: manifest-excerpt -->
+
+</details>
+
+### Checking on a running capture
+
+`secondeye proxy status` answers "is it up, what's in scope, and is it
+recording?" from any terminal, including a live request count for the active
+capture:
+
+<!-- BEGIN GENERATED: proxy-status -->
+```text
+Daemon running: yes
+Listener:       127.0.0.1:18079
+Scope:          127.0.0.1
+Upstream:       none (--no-upstream)
+Active capture: auth-flow-test (started 09:15:00, 3 requests so far)
+```
+<!-- END GENERATED: proxy-status -->
+
+And the start/stop pair reports where the capture landed and how much it caught:
+
+<!-- BEGIN GENERATED: capture-stop-summary -->
+```text
+✓ Capture started: auth-flow-test
+  Started at:  2026-03-14 09:15:00 UTC
+  Output dir:  ~/.local/state/secondeye/captures/2026-03-14_127-0-0-1/auth-flow-test/
+  Scope:       127.0.0.1
+
+Recording in-scope traffic. Run 'secondeye capture stop' when done.
+
+✓ Capture stopped: auth-flow-test (3 requests, 187B)
+```
+<!-- END GENERATED: capture-stop-summary -->
+
+> These three blocks are recorded from a real daemon run against a local test
+> server, which is why the scope reads `127.0.0.1` rather than a domain —
+> recording live traffic against a realistic hostname would need DNS. The
+> `ANALYSIS.md` example above comes from a committed capture fixture instead,
+> so it shows a realistic target.
+
 **Done for now?** `Ctrl+C` the daemon in Terminal 1 — it auto-flushes any active
 capture before exiting, so you never lose a capture by forgetting to run
 `capture stop` first.
@@ -232,9 +395,10 @@ secondeye ca status                       # CA fingerprint/expiry; never generat
 secondeye --version                       # print the installed version and exit
 ```
 
-Run `secondeye <noun> <verb> --help` for the full flag reference on any
-subcommand (`--listen-address`, `--target-all`, `--cluster-window`, `--max-connections`,
-`-v`/`-q`, etc.).
+See **[docs/CLI.md](docs/CLI.md)** for the full flag reference on every
+subcommand — generated from the real argument parser, so it can't drift from
+what the program accepts. `secondeye <noun> <verb> --help` prints the same text
+locally.
 
 ### A note on OAuth/OIDC and other third-party redirects
 

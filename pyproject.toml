@@ -36,7 +36,7 @@ classifiers = [
 ]
 dependencies = [
     "cryptography>=42.0,<43.0",
-    "h11>=0.14,<0.15",
+    "h11>=0.14,<0.17",
     "idna>=3.6,<4.0",
     "argcomplete>=3.1,<4.0",
 ]

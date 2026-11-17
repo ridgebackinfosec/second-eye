@@ -9,6 +9,7 @@ from secondeye.analysis.signals import (
     CorsMisconfiguration,
     EndpointSummary,
     IdValueReuseNote,
+    LegacyHttpVersion,
     ParameterNameSummary,
     SecretFinding,
     compute_auth_mechanisms,
@@ -16,6 +17,7 @@ from secondeye.analysis.signals import (
     compute_cors_misconfigurations,
     compute_distinct_endpoints,
     compute_id_value_reuse,
+    compute_legacy_http_versions,
     compute_parameter_names,
     compute_secret_findings,
     compute_security_header_posture,
@@ -41,6 +43,7 @@ def _entry(
     request_headers: tuple[HarHeader, ...] = (HarHeader("X-Requested-With", "XMLHttpRequest"),),
     request_body: bytes = b"",
     status: int = 200,
+    response_http_version: str = "1.1",
 ) -> HarEntry:
     return HarEntry(
         started_at=_T0,
@@ -55,7 +58,7 @@ def _entry(
         response=HarResponse(
             status=status,
             status_text="OK",
-            http_version="1.1",
+            http_version=response_http_version,
             headers=(HarHeader("Content-Type", "application/json"), *extra_response_headers),
             body=body,
         ),
@@ -766,3 +769,63 @@ class TestIdValueReuse:
                 name="order_id", value="9001", first_seen_index=0, further_occurrences=0
             )
         }
+
+
+class TestLegacyHttpVersions:
+    def test_no_findings_when_every_response_is_http_11(self) -> None:
+        classified = classify_entries([_entry() for _ in range(3)])
+
+        assert compute_legacy_http_versions(classified) == []
+
+    def test_counts_http_10_responses_and_records_first_entry(self) -> None:
+        entries = [
+            _entry(),
+            _entry(response_http_version="1.0"),
+            _entry(),
+            _entry(response_http_version="1.0"),
+        ]
+        classified = classify_entries(entries)
+
+        legacy = compute_legacy_http_versions(classified)
+
+        assert legacy == [LegacyHttpVersion(http_version="1.0", count=2, first_entry_index=1)]
+
+    def test_groups_multiple_legacy_versions_in_version_order(self) -> None:
+        entries = [
+            _entry(response_http_version="1.0"),
+            _entry(response_http_version="0.9"),
+            _entry(response_http_version="1.0"),
+        ]
+        classified = classify_entries(entries)
+
+        legacy = compute_legacy_http_versions(classified)
+
+        assert legacy == [
+            LegacyHttpVersion(http_version="0.9", count=1, first_entry_index=1),
+            LegacyHttpVersion(http_version="1.0", count=2, first_entry_index=0),
+        ]
+
+    def test_static_assets_count_too(self) -> None:
+        # Unlike the security-header posture signal, a legacy HTTP version
+        # on a static asset is still the same aged server speaking.
+        static = _static_entry()
+        entries = [
+            _entry(),
+            HarEntry(
+                started_at=static.started_at,
+                time_ms=static.time_ms,
+                request=static.request,
+                response=HarResponse(
+                    status=200,
+                    status_text="OK",
+                    http_version="1.0",
+                    headers=static.response.headers,
+                    body=static.response.body,
+                ),
+            ),
+        ]
+        classified = classify_entries(entries)
+
+        legacy = compute_legacy_http_versions(classified)
+
+        assert legacy == [LegacyHttpVersion(http_version="1.0", count=1, first_entry_index=1)]

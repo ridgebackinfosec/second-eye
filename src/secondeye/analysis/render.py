@@ -24,6 +24,7 @@ from secondeye.analysis.signals import (
     compute_debug_page_hints,
     compute_distinct_endpoints,
     compute_id_value_reuse,
+    compute_legacy_http_versions,
     compute_parameter_names,
     compute_secret_findings,
     compute_security_header_posture,
@@ -181,7 +182,8 @@ def _render_capture_signals(classified: list[ClassifiedEntry]) -> list[str]:
     hints = compute_stack_hints(classified)
     cors_findings = compute_cors_misconfigurations(classified)
     cookie_issues = compute_cookie_flag_issues(classified)
-    if not posture and not hints and not cors_findings and not cookie_issues:
+    legacy_versions = compute_legacy_http_versions(classified)
+    if not any((posture, hints, cors_findings, cookie_issues, legacy_versions)):
         return []
     lines = ["", "## Capture Signals", ""]
     if posture:
@@ -211,6 +213,18 @@ def _render_capture_signals(classified: list[ClassifiedEntry]) -> list[str]:
             lines.append(
                 f"- {_inline_safe(issue.cookie_name)}: missing {missing_str} "
                 f"(entry #{issue.har_entry_index})"
+            )
+    if legacy_versions:
+        # Every other block ends with its own blank separator; the cookie
+        # block above doesn't, so only add one when it actually ran.
+        if lines[-1] != "":
+            lines.append("")
+        lines.append("**Legacy HTTP versions:**")
+        for legacy in legacy_versions:
+            plural = "response" if legacy.count == 1 else "responses"
+            lines.append(
+                f"- HTTP/{legacy.http_version} on {legacy.count} {plural} "
+                f"(first: entry #{legacy.first_entry_index})"
             )
     return lines
 

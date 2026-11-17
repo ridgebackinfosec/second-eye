@@ -29,6 +29,7 @@ __all__ = [
     "DebugPageHint",
     "EndpointSummary",
     "IdValueReuseNote",
+    "LegacyHttpVersion",
     "OutlierInfo",
     "ParameterNameSummary",
     "SecretFinding",
@@ -41,6 +42,7 @@ __all__ = [
     "compute_debug_page_hints",
     "compute_distinct_endpoints",
     "compute_id_value_reuse",
+    "compute_legacy_http_versions",
     "compute_parameter_names",
     "compute_secret_findings",
     "compute_security_header_posture",
@@ -123,6 +125,21 @@ class SecurityHeaderPosture:
     header_name: str
     present_count: int
     total_count: int
+
+
+@dataclass(frozen=True)
+class LegacyHttpVersion:
+    """A pre-HTTP/1.1 response version observed in the capture.
+
+    Attributes:
+        http_version: The version as the destination sent it, e.g. "1.0".
+        count: How many responses in the capture used it.
+        first_entry_index: raw.har index of the first response that did.
+    """
+
+    http_version: str
+    count: int
+    first_entry_index: int
 
 
 @dataclass(frozen=True)
@@ -565,6 +582,44 @@ def compute_security_header_posture(
             total_count=len(candidates),
         )
         for name in _TRACKED_SECURITY_HEADERS
+    ]
+
+
+def compute_legacy_http_versions(
+    classified: list[ClassifiedEntry],
+) -> list[LegacyHttpVersion]:
+    """Group responses that came back on a pre-HTTP/1.1 version.
+
+    An HTTP/1.0-speaking destination is a mild finding in its own right —
+    an aged or embedded stack — and the HAR records the true version even
+    though the proxy has to re-frame it as 1.1 to relay it (h11 writes
+    nothing else; see proxy/_http_cycle.py).
+
+    Static assets are counted too, unlike compute_security_header_posture:
+    a legacy version on an asset is the same server speaking.
+
+    Args:
+        classified: All of the capture's entries, classified.
+
+    Returns:
+        One LegacyHttpVersion per distinct pre-1.1 version, ordered by
+        version string. Empty list if every response was HTTP/1.1.
+    """
+    counts: dict[str, int] = {}
+    first_index: dict[str, int] = {}
+    for item in classified:
+        version = item.entry.response.http_version
+        if version == "1.1":
+            continue
+        counts[version] = counts.get(version, 0) + 1
+        first_index.setdefault(version, item.index)
+    return [
+        LegacyHttpVersion(
+            http_version=version,
+            count=counts[version],
+            first_entry_index=first_index[version],
+        )
+        for version in sorted(counts)
     ]
 
 

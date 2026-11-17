@@ -424,3 +424,220 @@ class TestUpstreamModePreservesAbsoluteUriTarget:
             await server.wait_closed()
 
         assert upstream_received[0].startswith(b"GET http://dest.example/page HTTP/1.1")
+
+
+async def _drive_one_plain_request(
+    handler: PlainHttpHandler, request_bytes: bytes
+) -> tuple[bytes, asyncio.Server]:
+    """Send one raw request through a listener and read the full reply."""
+    server, port = await _open_plain_http_listener(handler)
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    writer.write(request_bytes)
+    await writer.drain()
+    response = b""
+    while True:
+        chunk = await asyncio.wait_for(reader.read(4096), timeout=5)
+        if not chunk:
+            break
+        response += chunk
+    writer.close()
+    return response, server
+
+
+def _direct_handler(
+    dest_port: int, recorded: list[HarEntry], *, targets: list[str] | None = None
+) -> PlainHttpHandler:
+    connector = UpstreamConnector(upstream_host=None, upstream_port=None, no_upstream=True)
+
+    async def fake_connect_plain_http(
+        host: str, port: int
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        return await asyncio.open_connection("127.0.0.1", dest_port)
+
+    connector.connect_plain_http = fake_connect_plain_http  # type: ignore[method-assign]
+
+    async def on_entry_recorded(entry: HarEntry) -> None:
+        recorded.append(entry)
+
+    return PlainHttpHandler(
+        scope_matcher=ScopeMatcher(targets=targets or ["target.example"]),
+        target_all=False,
+        upstream_connector=connector,
+        on_entry_recorded=on_entry_recorded,
+    )
+
+
+class TestHttp10Responses:
+    """h11 parses HTTP/1.0 but refuses to serialize it (_writers.py raises
+    LocalProtocolError("I only send HTTP/1.1")), so a destination answering
+    HTTP/1.0 used to kill the connection with a traceback and record nothing.
+    """
+
+    async def test_http_10_response_is_relayed_and_recorded(self) -> None:
+        dest_server, dest_port, _received = await _start_plaintext_http_destination(
+            [b"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello"]
+        )
+        recorded: list[HarEntry] = []
+        handler = _direct_handler(dest_port, recorded)
+        try:
+            response, server = await _drive_one_plain_request(
+                handler,
+                b"GET http://target.example/page HTTP/1.1\r\n"
+                b"Host: target.example\r\n"
+                b"Connection: close\r\n\r\n",
+            )
+        finally:
+            dest_server.close()
+            await dest_server.wait_closed()
+        server.close()
+        await server.wait_closed()
+
+        assert response.startswith(b"HTTP/1.1 200 OK")
+        assert b"hello" in response
+        assert len(recorded) == 1
+        # Full-fidelity capture (SPEC.md §0): the HAR records what the
+        # destination actually said, not the version we had to re-frame to.
+        assert recorded[0].response.http_version == "1.0"
+        assert recorded[0].response.body == b"hello"
+
+    async def test_http_10_eof_framed_response_body_relayed_intact(self) -> None:
+        dest_server, dest_port, _received = await _start_plaintext_http_destination(
+            [b"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nno-content-length-body"]
+        )
+        recorded: list[HarEntry] = []
+        handler = _direct_handler(dest_port, recorded)
+        try:
+            response, server = await _drive_one_plain_request(
+                handler,
+                b"GET http://target.example/page HTTP/1.1\r\n"
+                b"Host: target.example\r\n"
+                b"Connection: close\r\n\r\n",
+            )
+        finally:
+            dest_server.close()
+            await dest_server.wait_closed()
+        server.close()
+        await server.wait_closed()
+
+        assert b"no-content-length-body" in response
+        assert len(recorded) == 1
+        assert recorded[0].response.body == b"no-content-length-body"
+
+    async def test_http_10_response_from_chained_upstream_is_relayed(self) -> None:
+        """Mirrors the Burp-as-client setup: secondeye chains to an upstream
+        proxy, and the target behind it answers HTTP/1.0.
+        """
+        upstream_received: list[bytes] = []
+
+        async def handle_upstream(
+            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        ) -> None:
+            data = await reader.read(65536)
+            upstream_received.append(data)
+            writer.write(b"HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nok")
+            await writer.drain()
+            writer.close()
+
+        upstream_server = await asyncio.start_server(handle_upstream, "127.0.0.1", 0)
+        upstream_port = upstream_server.sockets[0].getsockname()[1]
+        connector = UpstreamConnector(
+            upstream_host="127.0.0.1",
+            upstream_port=upstream_port,
+            no_upstream=False,
+            upstream_insecure=True,
+        )
+        recorded: list[HarEntry] = []
+
+        async def on_entry_recorded(entry: HarEntry) -> None:
+            recorded.append(entry)
+
+        handler = PlainHttpHandler(
+            scope_matcher=ScopeMatcher(),
+            target_all=True,
+            upstream_connector=connector,
+            on_entry_recorded=on_entry_recorded,
+        )
+        try:
+            response, server = await _drive_one_plain_request(
+                handler,
+                b"GET http://dest.example/page HTTP/1.1\r\n"
+                b"Host: dest.example\r\n"
+                b"Connection: close\r\n\r\n",
+            )
+        finally:
+            upstream_server.close()
+            await upstream_server.wait_closed()
+        server.close()
+        await server.wait_closed()
+
+        assert response.startswith(b"HTTP/1.1 200 OK")
+        assert b"ok" in response
+        assert len(recorded) == 1
+        assert recorded[0].response.http_version == "1.0"
+
+
+class TestHttp10Requests:
+    """h11 cannot serialize an HTTP/1.0 request either, so one has to be
+    re-framed as 1.1 before being forwarded — including synthesizing the
+    Host header HTTP/1.0 is allowed to omit but h11 requires at 1.1.
+    """
+
+    async def test_http_10_request_is_forwarded_as_http_11_and_recorded_as_10(self) -> None:
+        dest_server, dest_port, received = await _start_plaintext_http_destination(
+            [b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"]
+        )
+        recorded: list[HarEntry] = []
+        handler = _direct_handler(dest_port, recorded)
+        try:
+            response, server = await _drive_one_plain_request(
+                handler,
+                b"GET http://target.example/page HTTP/1.0\r\nHost: target.example\r\n\r\n",
+            )
+        finally:
+            dest_server.close()
+            await dest_server.wait_closed()
+        server.close()
+        await server.wait_closed()
+
+        assert b"ok" in response
+        assert received[0].startswith(b"GET /page HTTP/1.1")
+        assert len(recorded) == 1
+        assert recorded[0].request.http_version == "1.0"
+
+    async def test_http_10_request_without_host_gets_synthesized_host(self) -> None:
+        dest_server, dest_port, received = await _start_plaintext_http_destination(
+            [b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"]
+        )
+        recorded: list[HarEntry] = []
+        handler = _direct_handler(dest_port, recorded)
+        try:
+            response, server = await _drive_one_plain_request(
+                handler, b"GET http://target.example/page HTTP/1.0\r\n\r\n"
+            )
+        finally:
+            dest_server.close()
+            await dest_server.wait_closed()
+        server.close()
+        await server.wait_closed()
+
+        assert b"ok" in response
+        assert received[0].startswith(b"GET /page HTTP/1.1")
+        assert b"host: target.example\r\n" in received[0].lower()
+
+    async def test_http_10_request_without_host_on_nonstandard_port(self) -> None:
+        dest_server, dest_port, received = await _start_plaintext_http_destination(
+            [b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"]
+        )
+        recorded: list[HarEntry] = []
+        handler = _direct_handler(dest_port, recorded)
+        try:
+            _response, server = await _drive_one_plain_request(
+                handler, b"GET http://target.example:8080/page HTTP/1.0\r\n\r\n"
+            )
+        finally:
+            dest_server.close()
+            await dest_server.wait_closed()
+        server.close()
+        await server.wait_closed()
+
+        assert b"host: target.example:8080\r\n" in received[0].lower()

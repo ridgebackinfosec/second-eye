@@ -483,6 +483,33 @@ class TestCaptureSignalsSection:
         assert "**Cookie flag issues:**" in md
         assert "`session_id`: missing Secure, HttpOnly, SameSite" in md
 
+    def test_legacy_http_version_rendered(self) -> None:
+        entry = HarEntry(
+            started_at=_at(0),
+            time_ms=1.0,
+            request=HarRequest(
+                method="GET",
+                url="https://example.com/api/data",
+                http_version="1.1",
+                headers=(HarHeader("X-Requested-With", "XMLHttpRequest"),),
+                body=b"",
+            ),
+            response=HarResponse(
+                status=200,
+                status_text="OK",
+                http_version="1.0",
+                headers=(HarHeader("Content-Type", "application/json"),),
+                body=b'{"ok":true}',
+            ),
+        )
+        md = _render([entry])
+        assert "**Legacy HTTP versions:**" in md
+        assert "HTTP/1.0 on 1 response (first: entry #0)" in md
+
+    def test_legacy_http_version_omitted_when_all_http_11(self) -> None:
+        md = _render([_xhr_entry(_at(0), "https://example.com/api/data")])
+        assert "**Legacy HTTP versions:**" not in md
+
 
 class TestTableOfContents:
     def test_toc_section_present_with_correct_anchor(self) -> None:

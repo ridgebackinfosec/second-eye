@@ -598,3 +598,130 @@ class TestConnectToNonStandardPort:
         assert result.returncode == 0, result.stderr
         assert result.stdout == b"ok"
         assert seen_ports == [non_standard_port]
+
+
+class TestHttp10OverTls:
+    """h11 refuses to serialize anything but HTTP/1.1, so a destination
+    answering HTTP/1.0 used to drop the intercepted connection with a
+    traceback and record nothing (see the matching plain-HTTP tests).
+    """
+
+    async def test_http_10_response_relayed_over_tls_and_recorded_as_10(
+        self, tmp_path: Path
+    ) -> None:
+        dest_server, dest_port, received = await _start_plaintext_http_destination(
+            [b"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello"]
+        )
+
+        ca = load_or_create_ca(tmp_path)
+        leaf_store = LeafCertificateStore(ca)
+        connector = UpstreamConnector(upstream_host=None, upstream_port=None, no_upstream=True)
+
+        async def fake_connect_tls(
+            host: str, port: int
+        ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+            return await asyncio.open_connection("127.0.0.1", dest_port)
+
+        connector.connect_tls = fake_connect_tls  # type: ignore[method-assign]
+
+        recorded: list[HarEntry] = []
+
+        async def on_entry_recorded(entry: HarEntry) -> None:
+            recorded.append(entry)
+
+        handler = InterceptHandler(
+            leaf_store=leaf_store,
+            upstream_connector=connector,
+            on_entry_recorded=on_entry_recorded,
+        )
+        intercept_server, intercept_port = await _start_intercepting_listener(
+            handler, "legacy.example.com"
+        )
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", intercept_port)
+            await writer.start_tls(_client_ssl_context(), server_hostname="legacy.example.com")
+            writer.write(
+                b"GET /old HTTP/1.1\r\nHost: legacy.example.com\r\nConnection: close\r\n\r\n"
+            )
+            await writer.drain()
+            response = b""
+            while True:
+                chunk = await asyncio.wait_for(reader.read(4096), timeout=5)
+                if not chunk:
+                    break
+                response += chunk
+            writer.close()
+        finally:
+            dest_server.close()
+            await dest_server.wait_closed()
+            intercept_server.close()
+            await intercept_server.wait_closed()
+
+        assert received[0].startswith(b"GET /old HTTP/1.1")
+        assert response.startswith(b"HTTP/1.1 200 OK")
+        assert b"hello" in response
+        assert len(recorded) == 1
+        assert recorded[0].response.http_version == "1.0"
+        assert recorded[0].response.body == b"hello"
+
+    async def test_http_10_informational_response_relayed_as_11(self, tmp_path: Path) -> None:
+        # The InformationalResponse arm of the same re-framing: h11 refuses
+        # to write a 1.0 101 just as it refuses a 1.0 200.
+        async def handle_dest(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            await reader.read(65536)
+            writer.write(
+                b"HTTP/1.0 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                b"Connection: Upgrade\r\n\r\n"
+            )
+            await writer.drain()
+            writer.close()
+
+        dest_server = await asyncio.start_server(handle_dest, "127.0.0.1", 0)
+        dest_port = dest_server.sockets[0].getsockname()[1]
+
+        ca = load_or_create_ca(tmp_path)
+        leaf_store = LeafCertificateStore(ca)
+        connector = UpstreamConnector(upstream_host=None, upstream_port=None, no_upstream=True)
+
+        async def fake_connect_tls(
+            host: str, port: int
+        ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+            return await asyncio.open_connection("127.0.0.1", dest_port)
+
+        connector.connect_tls = fake_connect_tls  # type: ignore[method-assign]
+
+        recorded: list[HarEntry] = []
+
+        async def on_entry_recorded(entry: HarEntry) -> None:
+            recorded.append(entry)
+
+        handler = InterceptHandler(
+            leaf_store=leaf_store,
+            upstream_connector=connector,
+            on_entry_recorded=on_entry_recorded,
+        )
+        intercept_server, intercept_port = await _start_intercepting_listener(
+            handler, "legacy.example.com"
+        )
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", intercept_port)
+            await writer.start_tls(_client_ssl_context(), server_hostname="legacy.example.com")
+            writer.write(
+                b"GET /ws HTTP/1.1\r\nHost: legacy.example.com\r\n"
+                b"Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+            )
+            await writer.drain()
+            response = await asyncio.wait_for(reader.read(4096), timeout=5)
+            writer.close()
+        finally:
+            dest_server.close()
+            await dest_server.wait_closed()
+            intercept_server.close()
+            await intercept_server.wait_closed()
+
+        assert response.startswith(b"HTTP/1.1 101 Switching Protocols")
+        assert len(recorded) == 1
+        assert recorded[0].response.status == 101
+        assert recorded[0].response.http_version == "1.0"

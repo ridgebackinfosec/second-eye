@@ -5,6 +5,40 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-11-17
+
+### Fixed
+- **HTTP/1.0 traffic no longer kills the connection.** Any exchange where
+  either side spoke HTTP/1.0 died with
+  `h11._util.LocalProtocolError: I only send HTTP/1.1`, dropped the
+  connection, leaked the upstream socket, and — worst of all — recorded
+  nothing, leaving a silent hole in the capture. h11 parses HTTP/1.0 but
+  refuses to serialize it, and secondeye was copying the peer's version
+  verbatim onto the events it sent. Both legs are now re-framed as HTTP/1.1
+  on the wire: a destination answering HTTP/1.0 (appliances, embedded and
+  aged stacks, anything built on Python's `BaseHTTPRequestHandler`) and a
+  client sending an HTTP/1.0 request are both relayed and recorded
+  correctly. An HTTP/1.0 request with no `Host` header — legal at 1.0,
+  rejected by h11 at 1.1 — gets one synthesized from the known destination.
+
+  The capture keeps full fidelity (`SPEC.md` §0): `raw.har` still records
+  the true `"httpVersion": "HTTP/1.0"` on whichever leg sent it. Only the
+  bytes on the wire are re-framed. One deliberate limitation: the client
+  sees `HTTP/1.1` in the status line even when the destination said
+  `HTTP/1.0`, because h11 cannot write a 1.0 status line. The HAR and
+  `ANALYSIS.md` both show the truth.
+- A protocol error while forwarding a request now degrades to a logged
+  `502` with the upstream connection closed, instead of escaping as an
+  unhandled traceback — `h11.LocalProtocolError` is not a subclass of
+  `h11.RemoteProtocolError`, so the existing guards in `proxy/intercept.py`
+  and `proxy/plain_http.py` never caught it.
+
+### Added
+- `ANALYSIS.md`'s `## Capture Signals` section now reports **Legacy HTTP
+  versions** — a count of pre-HTTP/1.1 responses and the first entry index
+  for each version. A destination still speaking HTTP/1.0 is a mild finding
+  in its own right.
+
 ## [1.0.3] - 2026-11-12
 
 ### Added

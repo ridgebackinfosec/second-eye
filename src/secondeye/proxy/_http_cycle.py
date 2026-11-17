@@ -82,6 +82,8 @@ async def forward_and_receive(
     upstream_writer: asyncio.StreamWriter,
     request_event: h11.Request,
     request_body: bytes,
+    *,
+    authority: str,
 ) -> tuple[h11.Response | h11.InformationalResponse, bytes, bytes]:
     """Re-send a parsed client request to upstream and parse its response.
 
@@ -90,6 +92,9 @@ async def forward_and_receive(
         upstream_writer: Writer for the upstream/destination connection.
         request_event: The parsed h11.Request from the client leg.
         request_body: The fully-accumulated request body from the client.
+        authority: The destination's ``host`` or ``host:port``, used only
+            to synthesize a Host header for an HTTP/1.0 request that
+            omitted one (see _as_http_11_request).
 
     Returns:
         (response_event, response_body, trailing_data). trailing_data is
@@ -101,14 +106,12 @@ async def forward_and_receive(
 
     Raises:
         h11.RemoteProtocolError: If upstream never sends a usable response.
+        h11.LocalProtocolError: If the request cannot be re-framed as
+            HTTP/1.1 (e.g. an HTTP/1.0 request with no Host header and a
+            non-ASCII destination authority).
     """
     upstream_conn = h11.Connection(our_role=h11.CLIENT)
-    outgoing_request = h11.Request(
-        method=request_event.method,
-        target=request_event.target,
-        headers=request_event.headers.raw_items(),
-        http_version=request_event.http_version,
-    )
+    outgoing_request = _as_http_11_request(request_event, authority=authority)
     _send(upstream_conn, upstream_writer, outgoing_request)
     if request_body:
         _send(upstream_conn, upstream_writer, h11.Data(data=request_body))
@@ -151,6 +154,89 @@ def _send(conn: h11.Connection, writer: asyncio.StreamWriter, event: h11.Event) 
         writer.write(data)
 
 
+def _as_http_11_request(request_event: h11.Request, *, authority: str) -> h11.Request:
+    """Return a copy of a parsed request that h11 is willing to serialize.
+
+    h11 parses HTTP/1.0 but refuses to write it (_writers.write_request
+    raises LocalProtocolError("I only send HTTP/1.1")), so an HTTP/1.0
+    request has to be re-framed as 1.1 before it can be forwarded. HTTP/1.0
+    also permits a request with no Host header, which h11's Request event
+    rejects at 1.1, so one is synthesized from the known destination.
+
+    The capture is unaffected: callers hand the *original* event to
+    capture/har.py, so the HAR still records HTTP/1.0 (SPEC.md §0's
+    full-fidelity requirement). Only the bytes put on the wire change.
+
+    Args:
+        request_event: The parsed h11.Request from the client leg.
+        authority: The destination's ``host`` or ``host:port``, used as the
+            synthesized Host value. Always ASCII in practice — h11 rejects
+            a non-ASCII request line at parse time and proxy/sni.py decodes
+            SNI as strict ASCII — but if that ever loosens, no Host is
+            synthesized and h11 rejects the request, rather than a
+            UnicodeEncodeError escaping as an unhandled crash.
+
+    Returns:
+        request_event itself when it is already HTTP/1.1 (the common case,
+        left byte-identical), otherwise an HTTP/1.1 copy.
+    """
+    if request_event.http_version == b"1.1":
+        return request_event
+    headers: list[tuple[bytes, bytes]] = list(request_event.headers.raw_items())
+    if not any(name.lower() == b"host" for name, _value in headers):
+        try:
+            # h11's write_headers re-orders Host first regardless, so the
+            # insert position here is cosmetic.
+            headers.insert(0, (b"Host", authority.encode("ascii")))
+        except UnicodeEncodeError:  # pragma: no cover - unreachable today
+            pass
+    return h11.Request(
+        method=request_event.method,
+        target=request_event.target,
+        headers=headers,
+        http_version=b"1.1",
+    )
+
+
+def _as_http_11_response(
+    response_event: h11.Response | h11.InformationalResponse,
+) -> h11.Response | h11.InformationalResponse:
+    """Return a copy of a parsed response that h11 is willing to serialize.
+
+    The mirror of _as_http_11_request for the response leg: h11's
+    _writers.write_any_response raises LocalProtocolError("I only send
+    HTTP/1.1") for anything else, and plenty of real targets (appliances,
+    aged stacks, stdlib BaseHTTPRequestHandler) still answer HTTP/1.0.
+
+    h11 re-derives the framing for the rewritten version on send: a 1.0
+    response that relied on connection-close framing gets an explicit
+    ``Connection: close`` and moves the connection to MUST_CLOSE, which the
+    callers' keep-alive checks already honour.
+
+    Args:
+        response_event: The response parsed off the upstream leg.
+
+    Returns:
+        response_event itself when it is already HTTP/1.1, otherwise an
+        HTTP/1.1 copy preserving status, reason and headers.
+    """
+    if response_event.http_version == b"1.1":
+        return response_event
+    if isinstance(response_event, h11.InformationalResponse):
+        return h11.InformationalResponse(
+            status_code=response_event.status_code,
+            headers=response_event.headers.raw_items(),
+            reason=response_event.reason,
+            http_version=b"1.1",
+        )
+    return h11.Response(
+        status_code=response_event.status_code,
+        headers=response_event.headers.raw_items(),
+        reason=response_event.reason,
+        http_version=b"1.1",
+    )
+
+
 async def write_response(
     stream: AsyncStream,
     conn: h11.Connection,
@@ -162,9 +248,15 @@ async def write_response(
     Args:
         stream: The client-facing stream (decrypted TLS or cleartext).
         conn: The same h11.Connection (our_role=h11.SERVER) read_request used.
-        response_event: The response to relay to the client.
+        response_event: The response to relay to the client. Re-framed as
+            HTTP/1.1 if the destination answered an older version, which
+            h11 cannot write (see _as_http_11_response).
         body: The response body to relay to the client.
+
+    Raises:
+        h11.LocalProtocolError: If h11 refuses to serialize the response.
     """
+    response_event = _as_http_11_response(response_event)
     data = conn.send(response_event)
     if data:
         await stream.write(data)

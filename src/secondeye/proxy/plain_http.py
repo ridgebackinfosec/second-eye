@@ -30,7 +30,7 @@ from secondeye.capture.har import HarEntry, build_har_entry
 from secondeye.exceptions import UpstreamConnectionError
 from secondeye.proxy._http_cycle import forward_and_receive, read_request, write_response
 from secondeye.proxy.upstream import UpstreamConnector
-from secondeye.scope.matcher import ScopeMatcher
+from secondeye.scope.matcher import ScopeMatcher, normalize_hostname
 
 __all__ = ["PlainHttpHandler"]
 
@@ -144,6 +144,10 @@ class PlainHttpHandler:
                     http_version=request_event.http_version,
                 )
 
+            # Punycode any IDN host so the value is usable as a Host header
+            # if the client sent an HTTP/1.0 request without one.
+            authority = _authority(normalize_hostname(host), port)
+
             try:
                 (
                     upstream_reader,
@@ -156,9 +160,13 @@ class PlainHttpHandler:
 
             try:
                 response_event, response_body, _trailing = await forward_and_receive(
-                    upstream_reader, upstream_writer, outgoing_request, request_body
+                    upstream_reader,
+                    upstream_writer,
+                    outgoing_request,
+                    request_body,
+                    authority=authority,
                 )
-            except (h11.RemoteProtocolError, OSError) as exc:
+            except (h11.ProtocolError, OSError) as exc:
                 logger.error("upstream/destination response error for %s:%d: %s", host, port, exc)
                 upstream_writer.close()
                 await _send_bad_gateway(stream, conn)
@@ -179,7 +187,16 @@ class PlainHttpHandler:
                 )
                 await self._on_entry_recorded(entry)
 
-            await write_response(stream, conn, response_event, response_body)
+            try:
+                await write_response(stream, conn, response_event, response_body)
+            except h11.LocalProtocolError as exc:  # pragma: no cover - no known trigger
+                # Backstop for the bug class _as_http_11_response fixes; see
+                # the matching guard in proxy/intercept.py. Any in-scope
+                # entry is already recorded above, so the capture keeps the
+                # exchange even though this leg ends here.
+                logger.error("cannot relay response to client for %s:%d: %s", host, port, exc)
+                upstream_writer.close()
+                return
             upstream_writer.close()
 
             if conn.our_state is h11.MUST_CLOSE or conn.their_state is h11.MUST_CLOSE:
@@ -212,9 +229,22 @@ def _parse_absolute_target(request_event: h11.Request) -> tuple[str, int, str] |
     return parsed.hostname, port, path
 
 
+def _authority(host: str, port: int) -> str:
+    """Render ``host`` or ``host:port``, omitting HTTP's default port.
+
+    Args:
+        host: The destination hostname.
+        port: The destination port.
+
+    Returns:
+        The authority component, as it would appear in a URL or a Host
+        header.
+    """
+    return host if port == _DEFAULT_HTTP_PORT else f"{host}:{port}"
+
+
 def _build_url(host: str, port: int, path: str) -> str:
-    authority = host if port == _DEFAULT_HTTP_PORT else f"{host}:{port}"
-    return f"http://{authority}{path}"
+    return f"http://{_authority(host, port)}{path}"
 
 
 async def _send_bad_gateway(stream: _PlainStream, conn: h11.Connection) -> None:

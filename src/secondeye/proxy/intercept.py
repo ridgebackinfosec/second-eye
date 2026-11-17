@@ -51,6 +51,7 @@ __all__ = ["InterceptHandler"]
 logger = logging.getLogger(__name__)
 
 _TLS_READ_CHUNK = 65536
+_DEFAULT_HTTPS_PORT = 443
 
 RecordCallback = Callable[[HarEntry], Awaitable[None]]
 
@@ -229,11 +230,19 @@ class InterceptHandler:
                 await _send_bad_gateway(tls_stream, conn)
                 return
 
+            # SNI is ASCII (punycode) on the wire, so this is a usable Host
+            # value for an HTTP/1.0 request that omitted one.
+            authority = sni if port == _DEFAULT_HTTPS_PORT else f"{sni}:{port}"
+
             try:
                 response_event, response_body, upstream_trailing = await forward_and_receive(
-                    upstream_reader, upstream_writer, request_event, request_body
+                    upstream_reader,
+                    upstream_writer,
+                    request_event,
+                    request_body,
+                    authority=authority,
                 )
-            except (h11.RemoteProtocolError, OSError) as exc:
+            except (h11.ProtocolError, OSError) as exc:
                 logger.error("upstream/destination response error for %s:%d: %s", sni, port, exc)
                 upstream_writer.close()
                 await _send_bad_gateway(tls_stream, conn)
@@ -253,7 +262,17 @@ class InterceptHandler:
             )
             await self._on_entry_recorded(entry)
 
-            await write_response(tls_stream, conn, response_event, response_body)
+            try:
+                await write_response(tls_stream, conn, response_event, response_body)
+            except h11.LocalProtocolError as exc:  # pragma: no cover - no known trigger
+                # Backstop for the bug class _as_http_11_response fixes: an
+                # unserializable response must close this connection with a
+                # logged error (and no leaked upstream socket), never a
+                # traceback mid-engagement. The entry is already recorded
+                # above, so the capture keeps the exchange either way.
+                logger.error("cannot relay response to client for %s:%d: %s", sni, port, exc)
+                upstream_writer.close()
+                return
 
             if response_event.status_code == WEBSOCKET_SWITCHING_PROTOCOLS:
                 logger.debug("WebSocket upgrade for %s:%d; switching to raw passthrough", sni, port)

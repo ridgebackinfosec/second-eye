@@ -12,8 +12,11 @@ theme.
 
 from __future__ import annotations
 
+import contextlib
 import io
+import os
 import re
+from collections.abc import Iterator
 
 import pytest
 
@@ -25,6 +28,20 @@ _ABSOLUTE_COLOUR = re.compile(r"\x1b\[[0-9;]*38;[25];")
 # Literal white/black foregrounds: 30 (black), 37 (white), 90 (bright black),
 # 97 (bright white). Each assumes a background to sit on.
 _LITERAL_MONOCHROME = re.compile(r"\x1b\[(?:[0-9;]*;)?(?:30|37|90|97)(?:;[0-9;]*)?m")
+
+
+@contextlib.contextmanager
+def _console_width(columns: int) -> Iterator[None]:
+    """Pin rich's detected terminal width for one render."""
+    previous = os.environ.get("COLUMNS")
+    os.environ["COLUMNS"] = str(columns)
+    try:
+        yield
+    finally:
+        if previous is None:
+            del os.environ["COLUMNS"]
+        else:
+            os.environ["COLUMNS"] = previous
 
 
 def _ui(*, force_color: bool = True) -> tuple[ui.Ui, io.StringIO, io.StringIO]:
@@ -451,33 +468,117 @@ class TestScopeView:
         assert ui.ScopeView(targets=()).summary() == "(none)"
 
 
-class TestCaptureListDoesNotLoseThePath:
-    """An output path the operator can't copy is useless.
+class TestCaptureListLayout:
+    """`capture list` has to stay legible at 80 columns.
 
-    rich truncates an over-long cell with an ellipsis by default; the
-    OUTPUT column must fold instead, so the full path survives.
+    rich shrinks table columns proportionally, which at narrow widths
+    first mangles short headers into "R…"/"SI…", then blanks cells while
+    keeping their headers, and finally clips the last column -- which
+    rendered a start date as a bare "2026-". The narrow columns are
+    pinned with min_width and CAPTURE is capped with max_width so the
+    only thing that ever degrades is an over-long capture name.
     """
 
-    def test_long_output_path_is_not_ellipsis_truncated(self) -> None:
-        long_dir = (
-            "/home/operator/.local/state/secondeye/captures/"
-            "2026-11-18_app-example-corp-com/auth-flow-test"
-        )
-        u, out, _err = _ui(force_color=False)
-        u.capture_list(
+    ROWS = [
+        ui.CaptureRow(
+            name="a-deliberately-long-capture-name-for-an-engagement",
+            request_count=112,
+            total_bytes=4_019_118,
+            output_dir="/captures/x",
+            target="staging.internal.corp.example.net",
+            finding_count=7,
+            started_at="2026-11-17 16:02",
+        ),
+        ui.CaptureRow(
+            name="auth-flow-test",
+            request_count=13,
+            total_bytes=1742,
+            output_dir="/captures/y",
+            target="app.example-corp.com",
+            finding_count=0,
+            started_at="2026-11-18 09:15",
+            active=True,
+        ),
+    ]
+
+    def _render(self, columns: int, *, captures_dir: str | None = "/captures") -> str:
+        out, err = io.StringIO(), io.StringIO()
+        with _console_width(columns):
+            ui.Ui(stdout=out, stderr=err, force_color=False).capture_list(
+                self.ROWS, captures_dir=captures_dir
+            )
+        return _ESC.sub("", out.getvalue())
+
+    @pytest.mark.parametrize("columns", [70, 80, 100, 140])
+    def test_never_exceeds_the_terminal_width(self, columns: int) -> None:
+        for line in self._render(columns).splitlines():
+            assert len(line) <= columns, f"{len(line)} > {columns}: {line!r}"
+
+    @pytest.mark.parametrize("columns", [70, 80, 100, 140])
+    def test_every_header_stays_intact(self, columns: int) -> None:
+        header = self._render(columns).splitlines()[0]
+        for column in ("CAPTURE", "REQS", "SIZE", "SIG", "STARTED"):
+            assert column in header, f"{column} mangled at {columns} columns"
+
+    @pytest.mark.parametrize("columns", [80, 100, 140])
+    def test_narrow_columns_keep_their_whole_values(self, columns: int) -> None:
+        text = self._render(columns)
+        assert "112" in text
+        assert "3.8MB" in text
+        assert "7" in text
+        # The timestamp in particular: clipping it to "2026-" was the bug
+        # that capping CAPTURE fixed.
+        assert "2026-11-17 16:02" in text
+
+    def test_a_short_name_is_never_truncated(self) -> None:
+        assert "auth-flow-test" in self._render(80)
+
+    def test_an_over_long_name_truncates_rather_than_starving_other_columns(self) -> None:
+        text = self._render(80)
+        assert "a-deliberately-long-capture-name" in text
+        assert "…" in text
+        assert "2026-11-17 16:02" in text
+
+    def test_captures_directory_is_printed_whole_in_the_footer(self) -> None:
+        captures_dir = "/home/operator/.local/state/secondeye/captures"
+        footer = [
+            line
+            for line in self._render(80, captures_dir=captures_dir).splitlines()
+            if "capture(s) in" in line
+        ]
+        assert footer, "no captures-directory footer was printed"
+        assert captures_dir in footer[0]
+        assert "…" not in footer[0]
+
+    def test_targets_are_named_when_the_listing_spans_more_than_one(self) -> None:
+        text = self._render(80)
+        assert "targets:" in text
+        assert "app.example-corp.com" in text
+        assert "staging.internal.corp.example.net" in text
+
+    def test_targets_line_is_omitted_for_a_single_target(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        ui.Ui(stdout=out, stderr=err, force_color=False).capture_list(
             [
                 ui.CaptureRow(
-                    name="auth-flow-test",
-                    request_count=13,
-                    total_bytes=1742,
-                    output_dir=long_dir,
+                    name="only",
+                    request_count=1,
+                    total_bytes=1,
+                    output_dir="/captures/z",
+                    target="app.example-corp.com",
                 )
-            ]
+            ],
+            captures_dir="/captures",
         )
-        text = _ESC.sub("", out.getvalue())
-        assert "…" not in text, "output path was truncated and can no longer be copied"
-        # The path may fold across lines, so compare with whitespace removed.
-        assert long_dir in "".join(text.split())
+        assert "targets:" not in _ESC.sub("", out.getvalue())
+
+    def test_findings_column_shows_a_dash_when_nothing_was_found(self) -> None:
+        assert "—" in self._render(80)
+
+    def test_active_capture_is_marked_and_the_marker_explained(self) -> None:
+        text = self._render(80)
+        assert "●" in text
+        assert "active" in text
 
 
 class TestColourEnvironmentConventions:

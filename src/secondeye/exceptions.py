@@ -11,6 +11,7 @@ from pathlib import Path
 
 __all__ = [
     "SecondEyeError",
+    "CaptureStoreError",
     "ConfigError",
     "ScopeConfigError",
     "CertGenerationError",
@@ -72,6 +73,19 @@ class CaptureNameConflictError(CaptureControlError):
 
 class NoActiveCaptureError(CaptureControlError):
     """Raised by capture stop (or a record attempt) when no capture is active."""
+
+
+class CaptureStoreError(SecondEyeError):
+    """Raised when a capture on disk can't be read back.
+
+    Covers a missing or non-directory capture path, an absent or
+    unparseable ``raw.har``/``manifest.json``, and a missing JSONL
+    buffer. Used by ``secondeye capture analyze``/``recover``/``list``,
+    which operate on whatever is already on disk rather than on a
+    capture the running daemon still holds -- so every one of these is a
+    condition the operator can hit by pointing at the wrong path, and
+    each needs to say which file was wrong.
+    """
 
 
 class ScopeConfigError(SecondEyeError):

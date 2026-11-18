@@ -198,12 +198,16 @@ class CaptureStoppedView:
         request_count: Requests recorded.
         total_bytes: Request+response body bytes recorded.
         output_dir: Where the three output files were written.
+        flow_count: Narrative flows in ANALYSIS.md.
+        finding_count: Actionable findings tallied for this capture.
     """
 
     name: str
     request_count: int
     total_bytes: int
     output_dir: str | None = None
+    flow_count: int = 0
+    finding_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -215,12 +219,22 @@ class CaptureRow:
         request_count: Requests recorded.
         total_bytes: Request+response body bytes recorded.
         output_dir: Where its outputs live.
+        target: First configured target, for display.
+        flow_count: Narrative flows in its ANALYSIS.md.
+        finding_count: Actionable findings tallied for it.
+        started_at: Pre-formatted start time, or "" if unknown.
+        active: Whether this capture is the one currently recording.
     """
 
     name: str
     request_count: int
     total_bytes: int
     output_dir: str
+    target: str = ""
+    flow_count: int = 0
+    finding_count: int = 0
+    started_at: str = ""
+    active: bool = False
 
 
 @dataclass(frozen=True)
@@ -517,33 +531,82 @@ class Ui:
         Args:
             view: The resolved capture-stop facts.
         """
-        self._out.print(Text.assemble(("✓ ", f"bold {_OK}"), ("Stopped", "bold"), " ", view.name))
+        self._capture_summary("Stopped", view)
+
+    def _capture_summary(
+        self, headline: str, view: CaptureStoppedView, *, note: str | None = None
+    ) -> None:
+        """Shared layout for capture stop/analyze/recover confirmations.
+
+        Args:
+            headline: The verb to lead with ("Stopped", "Recovered", ...).
+            view: The capture's facts.
+            note: Optional clarifier appended to the headline.
+        """
+        head = Text.assemble(("✓ ", f"bold {_OK}"), (headline, "bold"), " ", view.name)
+        if note is not None:
+            head.append(f"   {note}", style=_LABEL)
+        self._out.print(head)
         self._out.print()
-        rows: list[tuple[str, Text]] = [
-            (
-                "recorded",
-                Text.assemble(
-                    (str(view.request_count), "bold"),
-                    (" requests   ", _LABEL),
-                    (format_bytes(view.total_bytes), "bold"),
-                ),
-            ),
+        recorded = Text.assemble(
+            (str(view.request_count), "bold"),
+            (" requests   ", _LABEL),
+            (format_bytes(view.total_bytes), "bold"),
+        )
+        if view.flow_count:
+            recorded.append("   ", style=_LABEL)
+            recorded.append(str(view.flow_count), style="bold")
+            recorded.append(" flows", style=_LABEL)
+        rows: list[tuple[str, Text]] = [("recorded", recorded)]
+        if view.finding_count:
+            rows.append(
+                (
+                    "signals",
+                    Text.assemble(
+                        (f"⚠ {view.finding_count}", f"bold {_WARN}"),
+                        ("   see ## Capture Signals in ANALYSIS.md", _LABEL),
+                    ),
+                )
+            )
+        rows.append(
             (
                 "analysis",
                 Text.assemble(("ANALYSIS.md", "bold"), ("   → hand to your AI chat", _LABEL)),
-            ),
-            ("also", Text("raw.har · manifest.json", style=_LABEL)),
-        ]
+            )
+        )
+        rows.append(("also", Text("raw.har · manifest.json", style=_LABEL)))
         if view.output_dir is not None:
             rows.append(("output", Text(view.output_dir, style=_LABEL)))
         self._out.print(_kv(rows))
 
-    def capture_list(self, rows: list[CaptureRow]) -> None:
-        """Print one row per completed capture as a table.
+    def capture_list(self, rows: list[CaptureRow], *, captures_dir: str | None = None) -> None:
+        """Print one row per capture as a table.
+
+        SIG is the count of actionable findings, so a capture that found
+        something is visible without opening its ANALYSIS.md. The output
+        path is deliberately *not* a column: at terminal widths it either
+        truncates (uncopyable) or dominates the table. The captures
+        directory is printed once underneath instead, and every capture
+        lives at ``<captures-dir>/<date>_<target>/<name>/``.
 
         Args:
             rows: The captures to list, in display order.
+            captures_dir: Directory they were read from, shown as a footer.
         """
+        # Column budget: this has to stay readable at 80 columns, where
+        # rich would otherwise ellipsis-truncate the *headers* themselves.
+        # Hence single-space padding, the active marker folded into the
+        # name column rather than occupying its own, and no FLOWS column
+        # (the least useful of the candidates for triage -- REQS already
+        # conveys size, and the flow count is in ANALYSIS.md).
+        #
+        # TARGET is the one column allowed to ellipsis-truncate. Left to
+        # flex it collapses to *blank* cells at 80 columns while keeping
+        # its header, and a truncated hostname still identifies a target
+        # where an empty cell identifies nothing. Truncating is only
+        # acceptable here because nobody needs to copy a hostname out of
+        # a listing verbatim -- which is exactly why the capture path is
+        # a footer rather than a column.
         table = Table(
             box=SIMPLE_HEAD,
             header_style="bold",
@@ -551,19 +614,67 @@ class Ui:
             expand=False,
             pad_edge=False,
             show_edge=False,
-            padding=(0, 2),
+            padding=(0, 1),
         )
-        table.add_column("CAPTURE", style="bold", no_wrap=True)
-        table.add_column("REQS", justify="right", style=_ACCENT)
-        table.add_column("SIZE", justify="right")
-        # fold, not rich's default ellipsis truncation: a half-printed
-        # capture path can't be copied or cd'd into.
-        table.add_column("OUTPUT", style=_LABEL, overflow="fold")
+        # min_width pins the narrow columns so rich's proportional
+        # shrinking cannot squeeze them to "R…"/"SI…" or, worse, blank
+        # their cells while keeping their headers. CAPTURE then gets
+        # whatever is left, because the name is how an operator refers to
+        # a capture and two sharing a prefix must stay distinguishable.
+        table.add_column("CAPTURE", style="bold", no_wrap=True, overflow="ellipsis", max_width=36)
+        table.add_column("REQS", justify="right", style=_ACCENT, no_wrap=True, min_width=4)
+        table.add_column("SIZE", justify="right", no_wrap=True, min_width=7)
+        table.add_column("SIG", justify="right", style=_WARN, no_wrap=True, min_width=3)
+        table.add_column("STARTED", style=_LABEL, no_wrap=True, min_width=16)
         for row in rows:
+            name = Text()
+            name.append("● " if row.active else "  ", style=f"bold {_OK}")
+            name.append(row.name, style="bold")
             table.add_row(
-                row.name, str(row.request_count), format_bytes(row.total_bytes), row.output_dir
+                name,
+                str(row.request_count),
+                format_bytes(row.total_bytes),
+                str(row.finding_count) if row.finding_count else Text("—", style=_LABEL),
+                row.started_at,
             )
-        self._out.print(table)
+        # soft_wrap is right for the key/value surfaces (it keeps long
+        # paths and fingerprints unmangled, letting the terminal wrap
+        # them), but wrong for a table: without a width constraint rich
+        # measures the table at its natural size and a long capture name
+        # pushes it past the terminal, which then hard-wraps every row.
+        # Constrain this one renderable so rich fits it instead.
+        self._out.print(table, soft_wrap=False)
+        if captures_dir is not None:
+            footer = Text("  ")
+            if any(row.active for row in rows):
+                footer.append("● active   ", style=_OK)
+            footer.append(f"{len(rows)} capture(s) in {captures_dir}", style=_LABEL)
+            self._out.print(footer)
+        # Target isn't a column: it is near-constant within an engagement
+        # and is already encoded in each capture's <date>_<target>/
+        # directory, and giving it a column either truncated a hostname
+        # or blanked the cell at 80 columns. Name the targets only when
+        # the listing actually spans more than one, where the omission
+        # would otherwise lose information.
+        targets = sorted({row.target for row in rows if row.target})
+        if len(targets) > 1:
+            self._out.print(Text("  targets: " + ", ".join(targets), style=_LABEL))
+
+    def capture_analyzed(self, view: CaptureStoppedView) -> None:
+        """Confirm a re-render of an existing capture.
+
+        Args:
+            view: The re-rendered capture's facts.
+        """
+        self._capture_summary("Re-analyzed", view, note="raw.har unchanged")
+
+    def capture_recovered(self, view: CaptureStoppedView) -> None:
+        """Confirm a capture rebuilt from a leftover buffer.
+
+        Args:
+            view: The recovered capture's facts.
+        """
+        self._capture_summary("Recovered", view, note="rebuilt from a leftover buffer")
 
     def ca_status(self, view: CaStatusView) -> None:
         """Print the persisted CA's identity and validity.

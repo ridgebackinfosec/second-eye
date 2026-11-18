@@ -295,7 +295,7 @@ redirect-chain detail, polling-group collapsing, and timing-outlier notes.
 <!-- BEGIN GENERATED: manifest-excerpt -->
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "capture": {
     "name": "auth-flow-test",
     "started_at": "2026-03-14T09:15:00Z",
@@ -324,6 +324,17 @@ redirect-chain detail, polling-group collapsing, and timing-outlier notes.
       "app.example-corp.com"
     ]
   },
+  "findings": {
+    "total": 0,
+    "by_kind": {
+      "debug_page": 0,
+      "secret": 0,
+      "cookie_flag": 0,
+      "cors": 0,
+      "id_reuse": 0,
+      "legacy_http": 0
+    }
+  },
   "flows": [
     {
       "flow_id": 1,
@@ -350,7 +361,7 @@ capture:
 
 <!-- BEGIN GENERATED: proxy-status -->
 ```text
-▌ secondeye 1.1.0   running   127.0.0.1:18079  →  none (--no-upstream)
+▌ secondeye 1.2.0   running   127.0.0.1:18079  →  none (--no-upstream)
 
   scope     127.0.0.1
   capture   ● auth-flow-test   3 requests   since 09:15:00
@@ -371,7 +382,7 @@ And the start/stop pair reports where the capture landed and how much it caught:
 
 ✓ Stopped auth-flow-test
 
-  recorded  3 requests   187B
+  recorded  3 requests   187B   3 flows
   analysis  ANALYSIS.md   → hand to your AI chat
   also      raw.har · manifest.json
   output    ~/.local/state/secondeye/captures/2026-03-14_127-0-0-1/auth-flow-test
@@ -395,10 +406,61 @@ capture before exiting, so you never lose a capture by forgetting to run
 ```
 secondeye proxy status                    # daemon running? scope? active capture + live count?
 secondeye proxy stop                      # stop a daemon from another terminal
-secondeye capture list                    # captures completed so far this run
+secondeye capture list                    # every capture on disk, newest first (no daemon needed)
+secondeye capture analyze <dir>           # re-render ANALYSIS.md/manifest.json from a raw.har
+secondeye capture recover <dir>           # rebuild a capture a crashed daemon left behind
 secondeye ca status                       # CA fingerprint/expiry; never generates one
 secondeye --version                       # print the installed version and exit
 ```
+
+### Revisiting a capture
+
+`capture list`, `capture analyze` and `capture recover` all read whatever is on
+disk, so none of them needs a running daemon:
+
+```sh
+secondeye capture list                    # what have I recorded?
+secondeye capture analyze ~/.local/state/secondeye/captures/2026-11-18_example-com/auth-flow-test
+```
+
+`capture analyze` re-renders `manifest.json` and `ANALYSIS.md` from a capture's
+`raw.har`. Two reasons you'd want it: `ANALYSIS.md` is written once at
+`capture stop`, so an older capture is frozen at whatever the renderer did at
+the time — re-running it brings the capture up to the current analysis, which
+matters because the derived signals grew over several releases. And
+`--cluster-window` can be changed on a re-render, so you can re-cluster a
+capture without re-recording it:
+
+```sh
+secondeye capture analyze <dir> --cluster-window 500
+```
+
+`raw.har` is never touched — it's the ground truth the re-render reads from.
+
+If a daemon dies before you run `capture stop` (`kill -9`, lost terminal, OOM),
+the incremental JSONL buffer is still on disk and the capture isn't lost:
+
+```sh
+secondeye capture recover ~/.local/state/secondeye/captures/2026-11-18_example-com/interrupted
+```
+
+That writes the same three files `capture stop` would have. A buffer records
+request/response entries only, so the recovered `manifest.json` reports an
+empty scope and a window taken from the entries' own timestamps rather than
+inventing scope configuration it has no way to know.
+
+### Keeping captures with your engagement notes
+
+By default captures land under `~/.local/state/secondeye/captures/`.
+`--captures-dir` puts them wherever you're actually working:
+
+```sh
+secondeye proxy start --target example.com --no-upstream \
+  --captures-dir ./engagement-acme/captures
+```
+
+`capture list`, `analyze` and `recover` accept the same flag, so they can find
+captures written outside the default location.
 
 See **[docs/CLI.md](docs/CLI.md)** for the full flag reference on every
 subcommand — generated from the real argument parser, so it can't drift from

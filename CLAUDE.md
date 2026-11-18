@@ -29,6 +29,36 @@ Manual testing has passed. Coverage sits around 95% (floor is 90%, enforced via
 push, commit, or merge to `main` — it is only updated by a `develop` → `main`
 pull request, and tags are never created by hand (Actions owns tagging).
 
+### `bcp` — never bump, commit, or push unless told
+
+**Do not bump the version, commit, or push unless the user asks in that
+turn.** `bcp` is the user's shorthand authorising exactly those three things,
+and nothing weaker authorises any of them. Finish the code, tests and docs,
+report that the work is ready, and stop.
+
+This is a standing instruction, stated outright on 2026-11-18 after the
+v1.1.0 work was committed and pushed unprompted. Two specific traps, both of
+which have actually caught an agent here:
+
+- **Approving a plan is not authorisation to execute its release step.** A
+  plan saying work "lands on `develop`" describes the eventual destination,
+  not permission to push now.
+- **Choosing a release option from a prompt is not authorisation either.** On
+  2026-11-17 the user interrupted with "I control the `bcp` process. not you"
+  during a `gh pr create`, having earlier picked "Bump to 1.0.4 + PR to main"
+  from an options list in that same session.
+
+While no `bcp` has been given, put user-visible changes under `CHANGELOG.md`'s
+`## [Unreleased]` heading and leave `pyproject.toml`'s `version` alone.
+
+**On `bcp`:** bump `pyproject.toml`'s `version`; convert `## [Unreleased]` to
+a dated `## [X.Y.Z] - YYYY-MM-DD` heading; re-run `pip install -e ".[dev]"`
+(or `tests/test_version.py` fails on stale editable-install metadata);
+re-run `python scripts/generate_doc_examples.py` (the version appears in
+generated output); confirm all four gates; commit; push to `develop`; **stop
+there**. No `gh pr create`, no merge, no tag — `release.yml` owns tagging once
+the bump reaches `main`.
+
 CI is four files:
 
 - `.github/workflows/test.yml` — all four gates (`ruff check`,
@@ -78,10 +108,11 @@ heading is malformed.
 **The version is declared in exactly one place**: `pyproject.toml`'s
 `project.version`. `src/secondeye/__init__.py` resolves it at runtime from
 the installed distribution metadata as `__version__`; `cli.py`'s `_VERSION`
-and `recording/manager.py`'s `_CREATOR_VERSION` (which lands in every
-`raw.har`'s `log.creator.version`) both read it from there. Never add a
-version literal anywhere else — `tests/test_version.py` fails if one drifts
-in.
+and `analysis/pipeline.py` (which stamps every `raw.har`'s
+`log.creator.version`) both read it from there. Never add a version literal
+anywhere else — `tests/test_version.py` fails if one drifts in, and it now
+asserts that guarantee by reading a real `raw.har` rather than by comparing a
+module constant, so moving the writer again can't silently stop covering it.
 
 `SECURITY.md`, `CHANGELOG.md`, and `CONTRIBUTING.md` now exist at the
 repo root (v1.0.0 readiness pass) — keep `CHANGELOG.md`'s `## Unreleased`
@@ -102,9 +133,10 @@ internal code and `manifest.json`'s schema key), and full `--help` text on
 every flag (v0.2.0). CLI UX pass (v0.3.0): a `proxy start` startup banner
 (scope/listen/upstream summary + next-step hint, printed unconditionally via
 `Daemon.run()`'s new `on_started` callback, unaffected by `-v`/`-q`);
-colorized `✓`/`✗` output (`_green`/`_red` in `cli.py`, respecting `NO_COLOR`
-and non-tty streams); and `argcomplete`-based shell completion (the
-project's first non-load-bearing dependency). Usability batch (v0.4.0):
+colorized `✓`/`✗` output (then `_green`/`_red` in `cli.py`, respecting
+`NO_COLOR` and non-tty streams; superseded by `ui.py` in v1.1.0); and
+`argcomplete`-based shell completion (the project's first non-load-bearing
+dependency). Usability batch (v0.4.0):
 install docs corrected to `pipx install
 git+https://github.com/ridgebackinfosec/second-eye.git` (never published to
 PyPI, intentionally — a deliberate distribution choice, not a gap);
@@ -141,7 +173,23 @@ detection (query-string/JSON-body parameter values reused elsewhere in the
 capture, deliberately excluding auth/session values); and a capture-wide
 `## Sequence Diagram` section (Mermaid `sequenceDiagram`, one
 request/response arrow pair per narrative flow across "Operator" and
-"Target" lanes).
+"Target" lanes). Terminal UI pass (v1.1.0): `src/secondeye/ui.py`, a `rich`
+presentation layer every human-facing surface goes through, with colour
+chosen **light-terminal-first** (see the non-goals below); `rich` promoted
+from `dev` extra to runtime dependency; `FORCE_COLOR` honoured; and
+`--cluster-window`, which had been accepted and documented but inert, wired
+through to `cluster_entries()` with its default consolidated as
+`analysis/cluster.py`'s `DEFAULT_CLUSTER_WINDOW_MS`. Capture-lifecycle pass
+(v1.2.0): `analysis/pipeline.py` and `capture/store.py` (see the module
+boundaries below); `capture analyze` (re-render an existing capture, so one
+recorded under an older renderer isn't frozen there) and `capture recover`
+(rebuild from a crashed daemon's leftover JSONL buffer), both daemon-free;
+`capture list` reading the captures directory instead of the daemon's
+in-memory history, so it survives the daemon exiting; `--captures-dir`
+(`SPEC.md` §6.5's path is now the default, not fixed); a `findings` block in
+`manifest.json` counting only *actionable* signals (`schema_version` →
+`"1.1"`); and a correction to `--cluster-window`'s `--help`, which described
+polling dedup — a thing the window does not affect at all (`SPEC.md` §11.3).
 
 ## Commands
 
@@ -177,8 +225,11 @@ src/secondeye/
 │   ├── intercept.py       # TLS termination (ssl.MemoryBIO) + HTTP/1.1, in-scope path
 │   ├── plain_http.py      # absolute-URI (non-CONNECT) in-scope path
 │   └── _http_cycle.py     # h11 request/response cycle shared by intercept+plain_http
+├── ui.py                 # rich presentation layer; ALL human output goes through it
 ├── capture/{har,buffer}.py            # HAR entry construction; incremental JSONL buffer
-├── analysis/{classify,cluster,manifest,render}.py  # raw.har → manifest.json + ANALYSIS.md
+├── capture/store.py                   # reading finished captures back off disk
+├── analysis/{classify,cluster,manifest,render,signals}.py  # the analysis passes
+├── analysis/pipeline.py               # the one entries+metadata → three-files path
 └── recording/{manager,control}.py     # capture lifecycle state machine + control socket
 ```
 
@@ -187,6 +238,21 @@ doesn't know about HAR/analysis, `recording/control.py` is transport-only
 (business logic lives in `manager.py`), `tls/ca.py` (generate-once) and
 `tls/leaf.py` (generate-per-SNI, cached) are split because their lifecycles
 differ.
+
+Two boundaries added in v1.2.0 are worth respecting for the same reason:
+
+- **`analysis/pipeline.py` is the only place that writes a capture's three
+  output files.** `capture stop`, `capture analyze` and `capture recover` are
+  all callers. Don't re-inline the
+  `classify_entries`→`build_flows`→`build_manifest`/`render_analysis_md`
+  sequence anywhere else — that is exactly what made captures
+  un-re-renderable before, and a second copy lets a flushed capture and a
+  re-rendered one diverge.
+- **`capture/store.py` owns reading captures off disk**, and splits its error
+  policy on purpose: `load_capture()` *raises* when `manifest.json` is missing
+  (guessing a capture's name and scope would fabricate provenance into the
+  re-rendered output), while `discover_captures()` *skips* anything unparseable
+  (one corrupt capture must not make `capture list` useless for the rest).
 
 ## Conventions actually enforced here
 
@@ -351,6 +417,7 @@ generic workflow template will reach for all three:
 
 - A CDP-based screenshot/DOM correlator, mentioned in `SPEC.md` §0 as a
   deliberately separate companion tool.
-- `secondeye capture recover <path>` — reading a leftover JSONL buffer from a
-  crashed daemon. `SPEC.md` §6.3 flags this as "a natural, cheap follow-on"
-  but explicitly not required for v1.
+
+(`secondeye capture recover <path>` used to be listed here. It shipped in
+v1.2.0 alongside `capture analyze` and a disk-backed `capture list` — see
+`SPEC.md` §6.2a.)

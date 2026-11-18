@@ -147,7 +147,7 @@ class TestStopCaptureProducesCompleteOutput:
         assert raw_har["log"]["entries"][0]["request"]["url"] == "https://example.com/login"
 
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        assert manifest["schema_version"] == "1.0"
+        assert manifest["schema_version"] == "1.1"
         assert manifest["stats"]["total_requests"] == 2
         assert manifest["scope"]["targets"] == ["example.com"]
 
@@ -285,3 +285,52 @@ class TestClusterWindowReachesTheRenderer:
 
     async def test_configured_window_clusters_the_late_asset(self, tmp_path: Path) -> None:
         assert "**Assets loaded (1):**" in await self._analysis_for(tmp_path, 5000)
+
+
+class TestCapturesDirectory:
+    """--captures-dir relocates captures without changing the default.
+
+    Operators keep per-engagement working directories; burying captures
+    under ~/.local/state is fine as a default but shouldn't be the only
+    option. SPEC.md §6.5's path is therefore the default, not a fixed
+    location.
+    """
+
+    def test_defaults_to_captures_under_the_state_dir(self, tmp_path: Path) -> None:
+        manager = _manager(tmp_path)
+        active = manager.start_capture("default-location")
+        assert active.output_dir.parent.parent == tmp_path / "captures"
+
+    def test_honors_an_explicit_captures_dir(self, tmp_path: Path) -> None:
+        elsewhere = tmp_path / "engagement-acme" / "evidence"
+        manager = CaptureManager(
+            state_dir=tmp_path,
+            captures_dir=elsewhere,
+            target_label="example-com",
+            targets=["example.com"],
+            target_regex=None,
+            target_all=False,
+            upstream=None,
+            no_upstream=True,
+        )
+        active = manager.start_capture("relocated")
+        assert active.output_dir.parent.parent == elsewhere
+
+    async def test_outputs_actually_land_in_the_explicit_directory(self, tmp_path: Path) -> None:
+        elsewhere = tmp_path / "engagement-acme"
+        manager = CaptureManager(
+            state_dir=tmp_path,
+            captures_dir=elsewhere,
+            target_label="example-com",
+            targets=["example.com"],
+            target_regex=None,
+            target_all=False,
+            upstream=None,
+            no_upstream=True,
+        )
+        manager.start_capture("relocated")
+        await manager.record_entry(_entry())
+        result = await manager.stop_capture()
+        assert elsewhere in result.analysis_path.parents
+        assert result.analysis_path.is_file()
+        assert not (tmp_path / "captures").exists()

@@ -21,6 +21,7 @@ from secondeye.analysis.cluster import (
     detect_polling_groups,
     detect_redirect_chains,
 )
+from secondeye.analysis.signals import FindingCounts
 from secondeye.capture.har import HarEntry, header_value
 
 __all__ = [
@@ -31,7 +32,7 @@ __all__ = [
     "build_manifest",
 ]
 
-_SCHEMA_VERSION = "1.0"
+_SCHEMA_VERSION = "1.1"
 
 
 @dataclass(frozen=True)
@@ -212,6 +213,7 @@ def build_manifest(
     no_upstream: bool,
     classified: list[ClassifiedEntry],
     flows: list[Flow],
+    findings: FindingCounts | None = None,
 ) -> dict[str, object]:
     """Assemble the full manifest.json structure (SPEC.md §10.2).
 
@@ -227,6 +229,11 @@ def build_manifest(
         classified: All of the capture's entries, classified.
         flows: This capture's flows, from build_flows() (called once and
             shared with analysis/render.py — see module docstring).
+        findings: Actionable-finding tally, written as the ``findings``
+            block. Optional so a caller that only wants the structural
+            manifest need not compute signals; omitting it records a
+            zeroed block rather than dropping the key, so consumers can
+            rely on it being present.
 
     Returns:
         A JSON-serializable dict matching manifest.json's schema.
@@ -247,6 +254,7 @@ def build_manifest(
             "no_upstream": no_upstream,
         },
         "stats": _build_stats(classified),
+        "findings": (findings or FindingCounts()).to_manifest_dict(),
         "flows": [f.to_manifest_dict() for f in flows],
     }
 

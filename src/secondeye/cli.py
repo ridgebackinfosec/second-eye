@@ -17,6 +17,7 @@ import asyncio
 import datetime
 import logging
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import argcomplete
@@ -27,6 +28,9 @@ from cryptography.x509.oid import NameOID
 
 import secondeye
 from secondeye.analysis.cluster import DEFAULT_CLUSTER_WINDOW_MS
+from secondeye.analysis.pipeline import CaptureMetadata, write_capture_outputs
+from secondeye.capture.buffer import read_buffer
+from secondeye.capture.store import BUFFER_FILENAME, discover_captures, find_buffer, load_capture
 from secondeye.daemon import Daemon, DaemonConfig
 from secondeye.exceptions import ConfigError, SecondEyeError, UpstreamConnectionError
 from secondeye.recording.control import ControlSocketUnavailableError, send_request
@@ -163,12 +167,22 @@ def _build_parser() -> argparse.ArgumentParser:
         "enumerate. Recording still only happens while a capture is active.",
     )
     start.add_argument(
+        "--captures-dir",
+        type=Path,
+        default=None,
+        help="Directory to write capture output into, so captures can live "
+        "alongside your engagement notes instead of under the state directory. "
+        "Default: <state-dir>/captures (~/.local/state/secondeye/captures).",
+    )
+    start.add_argument(
         "--cluster-window",
         type=int,
         default=DEFAULT_CLUSTER_WINDOW_MS,
-        help="Milliseconds within which repeated near-identical requests (e.g. "
-        "polling) are clustered together in ANALYSIS.md instead of listed "
-        f"individually. Default: {DEFAULT_CLUSTER_WINDOW_MS}.",
+        help="Milliseconds within which a request is grouped with the page "
+        "navigation that preceded it, so its static assets are summarized in "
+        "ANALYSIS.md rather than listed one by one. Does not affect polling "
+        "deduplication, which keys off request interval rather than this "
+        f"window. Default: {DEFAULT_CLUSTER_WINDOW_MS}.",
     )
     start.add_argument(
         "--max-connections",
@@ -219,11 +233,74 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Stop the active capture and write raw.har/manifest.json/ANALYSIS.md.",
         help="Stop the active capture and write raw.har/manifest.json/ANALYSIS.md.",
     ).set_defaults(handler=_cmd_capture_stop)
-    capture_verbs.add_parser(
+    cap_list = capture_verbs.add_parser(
         "list",
-        description="List captures completed so far during this daemon run.",
-        help="List captures completed so far during this daemon run.",
-    ).set_defaults(handler=_cmd_capture_list)
+        description="List captures on disk, newest first. Reads the captures "
+        "directory, so it works with no daemon running and shows captures from "
+        "previous runs too.",
+        help="List captures on disk, newest first (no daemon required).",
+    )
+    cap_list.add_argument(
+        "--captures-dir",
+        type=Path,
+        default=None,
+        help="Captures directory to list. Default: <state-dir>/captures.",
+    )
+    cap_list.set_defaults(handler=_cmd_capture_list)
+
+    cap_analyze = capture_verbs.add_parser(
+        "analyze",
+        description="Re-render manifest.json and ANALYSIS.md from an existing "
+        "capture's raw.har. Use this to bring an older capture up to the current "
+        "analysis renderer, or to re-cluster it with a different "
+        "--cluster-window. raw.har is never modified. No daemon required.",
+        help="Re-render a capture's ANALYSIS.md/manifest.json from its raw.har.",
+    )
+    cap_analyze.add_argument(
+        "directory",
+        type=Path,
+        help="A capture directory containing raw.har and manifest.json.",
+    )
+    cap_analyze.add_argument(
+        "--cluster-window",
+        type=int,
+        default=None,
+        help="Clustering window in milliseconds for this re-render: how close a "
+        "request must be to the preceding navigation to have its assets "
+        f"summarized rather than listed. Default: {DEFAULT_CLUSTER_WINDOW_MS}.",
+    )
+    cap_analyze.set_defaults(handler=_cmd_capture_analyze)
+
+    cap_recover = capture_verbs.add_parser(
+        "recover",
+        description="Rebuild a capture from the incremental JSONL buffer a "
+        "crashed daemon left behind, writing the three output files that "
+        "'capture stop' would have. No daemon required.",
+        help="Rebuild a capture from a crashed daemon's leftover buffer.",
+    )
+    cap_recover.add_argument(
+        "path",
+        type=Path,
+        help=f"A capture directory containing a {BUFFER_FILENAME}, or that file itself.",
+    )
+    cap_recover.add_argument(
+        "--name",
+        default=None,
+        help="Capture name to record in the outputs. Default: the capture directory's own name.",
+    )
+    cap_recover.add_argument(
+        "--keep-buffer",
+        action="store_true",
+        help="Leave the JSONL buffer in place instead of removing it once the "
+        "capture has been written.",
+    )
+    cap_recover.add_argument(
+        "--cluster-window",
+        type=int,
+        default=DEFAULT_CLUSTER_WINDOW_MS,
+        help=f"Clustering window in milliseconds. Default: {DEFAULT_CLUSTER_WINDOW_MS}.",
+    )
+    cap_recover.set_defaults(handler=_cmd_capture_recover)
 
     ca = nouns.add_parser("ca", help="Manage secondeye's root CA and upstream trust.")
     ca_verbs = ca.add_subparsers(dest="verb", required=True)
@@ -312,6 +389,7 @@ def _cmd_proxy_start(args: argparse.Namespace) -> int:
         cluster_window_ms=args.cluster_window,
         max_connections=args.max_connections,
         state_dir=default_state_dir(),
+        captures_dir=args.captures_dir,
     )
     daemon = Daemon(config)
     asyncio.run(daemon.run(on_started=lambda: _print_startup_banner(daemon, config)))
@@ -331,7 +409,7 @@ def _print_startup_banner(daemon: Daemon, config: DaemonConfig) -> None:
             upstream=(
                 None if config.no_upstream else f"{config.upstream_host}:{config.upstream_port}"
             ),
-            captures_dir=str(config.state_dir / "captures"),
+            captures_dir=str(config.captures_dir or config.state_dir / "captures"),
             ca_was_created=daemon.ca_was_created,
         )
     )
@@ -463,40 +541,128 @@ def _cmd_capture_stop(_args: argparse.Namespace) -> int:
             request_count=int(str(result["request_count"])),
             total_bytes=int(str(result["total_bytes"])),
             output_dir=None if output_dir is None else str(output_dir),
+            flow_count=int(str(result.get("flow_count") or 0)),
+            finding_count=int(str(result.get("finding_count") or 0)),
         )
     )
     return 0
 
 
-def _cmd_capture_list(_args: argparse.Namespace) -> int:
-    try:
-        response = asyncio.run(send_request(_control_socket_path(), "capture.list"))
-    except ControlSocketUnavailableError:
-        ui.error("No running secondeye daemon found.")
-        return 1
+def _cmd_capture_list(args: argparse.Namespace) -> int:
+    """List captures from disk rather than from a daemon's memory.
 
-    if not response.get("ok"):
-        ui.error(_error_message(response))
-        return 1
-
-    captures = response["result"]
-    assert isinstance(captures, list)
-    if not captures:
-        ui.plain("No captures recorded yet this run.")
+    Previously this asked the running daemon for its in-process history,
+    so it required a live daemon and could not see any capture from an
+    earlier run. Reading the captures directory answers the question the
+    operator is actually asking — "what have I recorded?" — and keeps
+    working after the daemon exits.
+    """
+    captures_dir = args.captures_dir or (default_state_dir() / "captures")
+    summaries = discover_captures(captures_dir)
+    if not summaries:
+        ui.plain(f"No captures found in {captures_dir}")
         return 0
 
-    rows: list[CaptureRow] = []
-    for capture in captures:
-        assert isinstance(capture, dict)
-        rows.append(
+    active_name = _active_capture_name()
+    ui.capture_list(
+        [
             CaptureRow(
-                name=str(capture["name"]),
-                request_count=int(str(capture["request_count"])),
-                total_bytes=int(str(capture["total_bytes"])),
-                output_dir=str(capture["output_dir"]),
+                name=summary.name,
+                request_count=summary.request_count,
+                total_bytes=summary.total_bytes,
+                output_dir=str(summary.output_dir),
+                target=summary.target,
+                flow_count=summary.flow_count,
+                finding_count=summary.finding_count,
+                started_at=(
+                    "" if summary.started_at is None else _format_capture_time(summary.started_at)
+                ),
+                active=summary.name == active_name,
             )
+            for summary in summaries
+        ],
+        captures_dir=str(captures_dir),
+    )
+    return 0
+
+
+def _active_capture_name() -> str | None:
+    """Name of the in-progress capture, if a daemon happens to be running.
+
+    Best-effort decoration for ``capture list``: the listing is built
+    from disk and must not depend on a daemon, so any failure to reach
+    one simply means nothing is marked active.
+    """
+    try:
+        response = asyncio.run(send_request(_control_socket_path(), "proxy.status"))
+    except ControlSocketUnavailableError:
+        return None
+    if not response.get("ok"):
+        return None
+    result = response.get("result")
+    if not isinstance(result, dict):
+        return None
+    active = result.get("active_capture")
+    if not isinstance(active, dict):
+        return None
+    return str(active["name"])
+
+
+def _cmd_capture_analyze(args: argparse.Namespace) -> int:
+    """Re-render an existing capture's manifest.json and ANALYSIS.md."""
+    loaded = load_capture(args.directory)
+    metadata = loaded.metadata
+    if args.cluster_window is not None:
+        metadata = replace(metadata, cluster_window_ms=args.cluster_window)
+    outputs = write_capture_outputs(loaded.output_dir, loaded.entries, metadata)
+    ui.capture_analyzed(
+        CaptureStoppedView(
+            name=metadata.name,
+            request_count=outputs.request_count,
+            total_bytes=outputs.total_bytes,
+            flow_count=outputs.flow_count,
+            finding_count=outputs.findings.total,
+            output_dir=str(outputs.output_dir),
         )
-    ui.capture_list(rows)
+    )
+    return 0
+
+
+def _cmd_capture_recover(args: argparse.Namespace) -> int:
+    """Rebuild a capture from a crashed daemon's leftover JSONL buffer."""
+    buffer_path = find_buffer(args.path)
+    output_dir = buffer_path.parent
+    entries = read_buffer(buffer_path)
+    if not entries:
+        ui.error(f"{buffer_path} contains no complete entries — nothing to recover.")
+        return 1
+
+    # A buffer records entries only: it carries no scope configuration and
+    # no capture window. Those are left empty rather than inferred, so the
+    # recovered manifest never claims provenance it doesn't have. The
+    # timestamps come from the entries themselves, which is real data.
+    started_at = min(entry.started_at for entry in entries)
+    ended_at = max(entry.started_at for entry in entries)
+    metadata = CaptureMetadata(
+        name=args.name or output_dir.name,
+        started_at=started_at,
+        ended_at=ended_at,
+        targets=[],
+        cluster_window_ms=args.cluster_window,
+    )
+    outputs = write_capture_outputs(output_dir, entries, metadata)
+    if not args.keep_buffer:
+        buffer_path.unlink(missing_ok=True)
+    ui.capture_recovered(
+        CaptureStoppedView(
+            name=metadata.name,
+            request_count=outputs.request_count,
+            total_bytes=outputs.total_bytes,
+            flow_count=outputs.flow_count,
+            finding_count=outputs.findings.total,
+            output_dir=str(outputs.output_dir),
+        )
+    )
     return 0
 
 
@@ -703,6 +869,18 @@ def _scope_view(scope: dict[str, object]) -> ScopeView:
 def _format_utc_time(iso_value: str) -> str:
     dt = datetime.datetime.fromisoformat(iso_value.replace("Z", "+00:00"))
     return dt.astimezone(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _format_capture_time(value: datetime.datetime) -> str:
+    """Format a capture's start for the ``capture list`` table.
+
+    Args:
+        value: The capture's start time.
+
+    Returns:
+        ``"YYYY-MM-DD HH:MM"`` in UTC.
+    """
+    return value.astimezone(datetime.UTC).strftime("%Y-%m-%d %H:%M")
 
 
 def _format_local_time(iso_value: str) -> str:

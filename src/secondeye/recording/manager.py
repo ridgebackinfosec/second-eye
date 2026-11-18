@@ -18,16 +18,12 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-import secondeye
-from secondeye.analysis.classify import classify_entries
 from secondeye.analysis.cluster import DEFAULT_CLUSTER_WINDOW_MS
-from secondeye.analysis.manifest import build_flows, build_manifest
-from secondeye.analysis.render import render_analysis_md
+from secondeye.analysis.pipeline import CaptureMetadata, write_capture_outputs
 from secondeye.capture.buffer import CaptureBuffer, read_buffer
 from secondeye.capture.har import HarEntry
 from secondeye.exceptions import (
@@ -40,9 +36,6 @@ __all__ = ["ActiveCapture", "CaptureManager", "CaptureResult"]
 
 logger = logging.getLogger(__name__)
 
-_HAR_VERSION = "1.2"
-_CREATOR_NAME = "secondeye"
-_CREATOR_VERSION = secondeye.__version__
 _BUFFER_FILENAME = ".buffer.jsonl"
 
 
@@ -73,6 +66,8 @@ class CaptureResult:
         raw_har_path: Path to raw.har.
         manifest_path: Path to manifest.json.
         analysis_path: Path to ANALYSIS.md.
+        flow_count: Narrative flows in ANALYSIS.md.
+        finding_count: Actionable findings tallied for this capture.
     """
 
     name: str
@@ -82,6 +77,8 @@ class CaptureResult:
     raw_har_path: Path
     manifest_path: Path
     analysis_path: Path
+    flow_count: int = 0
+    finding_count: int = 0
 
 
 class CaptureManager:
@@ -91,6 +88,7 @@ class CaptureManager:
         self,
         *,
         state_dir: Path,
+        captures_dir: Path | None = None,
         target_label: str,
         targets: list[str],
         target_regex: list[str] | None,
@@ -102,7 +100,10 @@ class CaptureManager:
         """Store fixed daemon-startup configuration for this run.
 
         Args:
-            state_dir: secondeye's state directory (captures/ lives under it).
+            state_dir: secondeye's state directory.
+            captures_dir: Where capture output directories are created.
+                Defaults to ``state_dir / "captures"`` (SPEC.md §6.5's
+                layout), which is what --captures-dir overrides.
             target_label: Precomputed label identifying the configured
                 target(s) for the output directory name (SPEC.md §6.5,
                 e.g. "example-com"); derived by the caller (daemon.py).
@@ -116,6 +117,7 @@ class CaptureManager:
                 stop so the configured value reaches cluster_entries().
         """
         self._state_dir = state_dir
+        self._captures_dir = captures_dir or (state_dir / "captures")
         self._target_label = target_label
         self._targets = targets
         self._target_regex = target_regex
@@ -127,6 +129,11 @@ class CaptureManager:
         self._buffer: CaptureBuffer | None = None
         self._history: list[CaptureResult] = []
         self._active_request_count = 0
+
+    @property
+    def captures_dir(self) -> Path:
+        """Where this run's capture directories are created."""
+        return self._captures_dir
 
     @property
     def active_capture(self) -> ActiveCapture | None:
@@ -172,7 +179,7 @@ class CaptureManager:
 
         started_at = datetime.datetime.now(datetime.UTC)
         date_label = started_at.strftime("%Y-%m-%d")
-        output_dir = self._state_dir / "captures" / f"{date_label}_{self._target_label}" / name
+        output_dir = self._captures_dir / f"{date_label}_{self._target_label}" / name
         if output_dir.exists():
             raise CaptureNameConflictError(name, output_dir)
 
@@ -216,10 +223,8 @@ class CaptureManager:
         entries = read_buffer(buffer_path) if buffer_path.exists() else []
         ended_at = datetime.datetime.now(datetime.UTC)
 
-        classified = classify_entries(entries)
-        flows = build_flows(classified)
-        manifest_dict = build_manifest(
-            capture_name=active.name,
+        metadata = CaptureMetadata(
+            name=active.name,
             started_at=active.started_at,
             ended_at=ended_at,
             targets=self._targets,
@@ -227,40 +232,32 @@ class CaptureManager:
             target_all=self._target_all,
             upstream=self._upstream,
             no_upstream=self._no_upstream,
-            classified=classified,
-            flows=flows,
-        )
-        analysis_md = render_analysis_md(
-            capture_name=active.name,
-            targets=self._targets,
-            started_at=active.started_at,
-            ended_at=ended_at,
-            classified=classified,
-            flows=flows,
             cluster_window_ms=self._cluster_window_ms,
         )
-        raw_har = _build_raw_har(entries)
-
-        await asyncio.to_thread(
-            _write_outputs, active.output_dir, raw_har, manifest_dict, analysis_md
+        # Same code path as `capture analyze` and `capture recover`, so a
+        # capture flushed here and one re-rendered later cannot diverge.
+        outputs = await asyncio.to_thread(
+            write_capture_outputs, active.output_dir, entries, metadata
         )
         buffer_path.unlink(missing_ok=True)
 
-        total_bytes = sum(len(e.request.body) + len(e.response.body) for e in entries)
         result = CaptureResult(
             name=active.name,
-            request_count=len(entries),
-            total_bytes=total_bytes,
-            output_dir=active.output_dir,
-            raw_har_path=active.output_dir / "raw.har",
-            manifest_path=active.output_dir / "manifest.json",
-            analysis_path=active.output_dir / "ANALYSIS.md",
+            request_count=outputs.request_count,
+            total_bytes=outputs.total_bytes,
+            output_dir=outputs.output_dir,
+            raw_har_path=outputs.raw_har_path,
+            manifest_path=outputs.manifest_path,
+            analysis_path=outputs.analysis_path,
+            flow_count=outputs.flow_count,
+            finding_count=outputs.findings.total,
         )
         logger.info(
-            "capture stopped: %s (%d requests, %d bytes)",
+            "capture stopped: %s (%d requests, %d bytes, %d findings)",
             active.name,
             result.request_count,
-            total_bytes,
+            result.total_bytes,
+            result.finding_count,
         )
 
         self._active = None
@@ -271,22 +268,3 @@ class CaptureManager:
     def list_captures(self) -> list[CaptureResult]:
         """Return completed captures from this daemon run, in order."""
         return list(self._history)
-
-
-def _build_raw_har(entries: list[HarEntry]) -> dict[str, object]:
-    return {
-        "log": {
-            "version": _HAR_VERSION,
-            "creator": {"name": _CREATOR_NAME, "version": _CREATOR_VERSION},
-            "entries": [entry.to_har_dict() for entry in entries],
-        }
-    }
-
-
-def _write_outputs(
-    output_dir: Path, raw_har: dict[str, object], manifest: dict[str, object], analysis_md: str
-) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "raw.har").write_text(json.dumps(raw_har, indent=2), encoding="utf-8")
-    (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    (output_dir / "ANALYSIS.md").write_text(analysis_md, encoding="utf-8")

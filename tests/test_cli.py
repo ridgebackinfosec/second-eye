@@ -673,7 +673,9 @@ class TestCaptureLifecycleOutputFormats:
     ) -> None:
         code, out, _err = _run_cli(capsys, "capture", "list")
         assert code == 0
-        assert "No captures recorded yet this run." in out
+        # `capture list` reads the captures directory now, not the daemon's
+        # in-memory history, so an empty run reports an empty directory.
+        assert "No captures found" in out
 
     def test_proxy_status_reports_active_capture(self, capsys: pytest.CaptureFixture[str]) -> None:
         _run_cli(capsys, "capture", "start", "--name", "active-one")

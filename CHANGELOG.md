@@ -5,6 +5,63 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-18
+
+### Added
+- **`secondeye capture analyze <dir>`** — re-render `manifest.json` and
+  `ANALYSIS.md` from an existing capture's `raw.har`. Captures were
+  write-once, so every one stayed frozen at whichever renderer version
+  produced it, which matters because the analysis signals arrived across
+  v0.5.0, v0.6.0 and v0.7.0. Takes `--cluster-window` to re-cluster without
+  re-recording. `raw.har` is never modified, and no daemon is required.
+- **`secondeye capture recover <path>`** — rebuild a capture from the
+  incremental JSONL buffer a crashed daemon leaves behind, writing the three
+  files `capture stop` would have. Accepts a capture directory or the buffer
+  file itself; `--keep-buffer` leaves it in place, `--name` overrides the name
+  taken from the directory. A buffer carries entries only, so the recovered
+  manifest records an empty scope and a window derived from the entries' own
+  timestamps rather than inventing provenance it doesn't have.
+- **`--captures-dir`** on `proxy start`, so captures can be written beside an
+  engagement's notes instead of under the state directory. `capture list`,
+  `analyze` and `recover` accept it too. The default is unchanged, so existing
+  setups behave exactly as before.
+- `manifest.json` gains a `findings` block tallying the *actionable* signals
+  (debug pages, credential patterns, cookie-flag issues, CORS
+  misconfigurations, ID-value reuse, legacy HTTP versions). Descriptive
+  signals are deliberately excluded — they describe a capture rather than
+  flagging something to look at, and counting them would make the total
+  meaningless. `schema_version` is now `"1.1"`; the block is always present,
+  zeroed when nothing was found.
+- `capture stop` and the new commands report flow and finding counts, so "did
+  this capture find anything?" is answerable without opening `ANALYSIS.md`.
+
+### Changed
+- **`secondeye capture list` reads the captures directory instead of the
+  daemon's in-memory history.** It previously required a running daemon and
+  could only see captures from the run that was still alive. It now works with
+  no daemon, shows captures from previous runs, lists newest first, and marks
+  the active capture when a daemon happens to be up. Columns are capture,
+  requests, size, findings and start time; the capture path moved to a footer,
+  because at 80 columns a path column either truncated — making it
+  uncopyable — or crowded out every other column.
+- The render pipeline moved to `analysis/pipeline.py`, now the only place a
+  capture's three output files are written. `capture stop` is one caller of it
+  rather than the implementation, so a capture flushed by the daemon and one
+  re-rendered later cannot diverge.
+- `SPEC.md` §6.5's captures path is documented as the default rather than a
+  fixed location, and §6.2a describes revisiting a finished capture.
+
+### Fixed
+- **`--cluster-window`'s `--help` text described the wrong behaviour.** It
+  claimed to control how "repeated near-identical requests (e.g. polling)" are
+  collapsed, but polling deduplication keys off request-interval regularity
+  and is not affected by this window at all. The window governs whether a
+  request is grouped with the navigation that preceded it, which surfaces as
+  the per-navigation "Assets loaded" summary. Corrected on both `proxy start`
+  and `capture analyze`, and `SPEC.md` §11.3 now states the flag's scope
+  explicitly. (The flag itself was fixed in v1.1.0, where it did nothing at
+  all; this is the description catching up with it.)
+
 ## [1.1.0] - 2026-11-18
 
 ### Fixed

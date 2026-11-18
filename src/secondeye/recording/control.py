@@ -252,6 +252,8 @@ def _capture_result_to_dict(result: CaptureResult) -> dict[str, object]:
         "name": result.name,
         "request_count": result.request_count,
         "total_bytes": result.total_bytes,
+        "flow_count": result.flow_count,
+        "finding_count": result.finding_count,
         "output_dir": str(result.output_dir),
         "raw_har_path": str(result.raw_har_path),
         "manifest_path": str(result.manifest_path),

@@ -24,6 +24,7 @@ from secondeye.capture.har import HarEntry, header_value
 
 __all__ = [
     "AuthMechanismSummary",
+    "FindingCounts",
     "CookieFlagIssue",
     "CorsMisconfiguration",
     "DebugPageHint",
@@ -41,6 +42,7 @@ __all__ = [
     "compute_cors_misconfigurations",
     "compute_debug_page_hints",
     "compute_distinct_endpoints",
+    "compute_finding_counts",
     "compute_id_value_reuse",
     "compute_legacy_http_versions",
     "compute_parameter_names",
@@ -829,3 +831,81 @@ def _compute_outliers(
         if multiple >= threshold_multiple:
             outliers[c.index] = OutlierInfo(value=value, median=median, multiple=round(multiple, 1))
     return outliers
+
+
+@dataclass(frozen=True)
+class FindingCounts:
+    """A tally of actionable findings in one capture.
+
+    Only signals that flag something worth looking at are counted. The
+    descriptive signals — endpoints touched, auth mechanisms observed,
+    status-code rollup, parameter names, stack hints, security-header
+    posture, timing/size outliers — describe the capture rather than
+    flagging a problem, and counting them would make the total
+    meaningless.
+
+    Attributes:
+        debug_pages: Framework debug/error pages exposed.
+        secrets: Credential-shaped strings found in response bodies.
+        cookie_flags: Set-Cookie headers missing Secure/HttpOnly/SameSite.
+        cors: Access-Control-Allow-Origin "*" paired with credentials.
+        id_reuse: Parameter values reused across requests.
+        legacy_http: Exchanges where either side spoke HTTP/1.0.
+    """
+
+    debug_pages: int = 0
+    secrets: int = 0
+    cookie_flags: int = 0
+    cors: int = 0
+    id_reuse: int = 0
+    legacy_http: int = 0
+
+    @property
+    def total(self) -> int:
+        """The sum across every finding kind."""
+        return (
+            self.debug_pages
+            + self.secrets
+            + self.cookie_flags
+            + self.cors
+            + self.id_reuse
+            + self.legacy_http
+        )
+
+    def to_manifest_dict(self) -> dict[str, object]:
+        """Serialize for manifest.json's ``findings`` block.
+
+        Returns:
+            ``{"total": int, "by_kind": {...}}``, JSON-serializable.
+        """
+        return {
+            "total": self.total,
+            "by_kind": {
+                "debug_page": self.debug_pages,
+                "secret": self.secrets,
+                "cookie_flag": self.cookie_flags,
+                "cors": self.cors,
+                "id_reuse": self.id_reuse,
+                "legacy_http": self.legacy_http,
+            },
+        }
+
+
+def compute_finding_counts(classified: list[ClassifiedEntry]) -> FindingCounts:
+    """Tally the actionable findings across a capture.
+
+    Args:
+        classified: All of the capture's entries, classified.
+
+    Returns:
+        The per-kind counts. ``secrets`` counts individual findings, not
+        entries, since one response can carry several.
+    """
+    return FindingCounts(
+        debug_pages=len(compute_debug_page_hints(classified)),
+        secrets=sum(len(findings) for findings in compute_secret_findings(classified).values()),
+        cookie_flags=len(compute_cookie_flag_issues(classified)),
+        cors=len(compute_cors_misconfigurations(classified)),
+        id_reuse=len(compute_id_value_reuse(classified)),
+        legacy_http=len(compute_legacy_http_versions(classified)),
+    )

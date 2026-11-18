@@ -4,6 +4,7 @@ import datetime
 
 from secondeye.analysis.classify import Category, classify_entries
 from secondeye.analysis.manifest import build_flows, build_manifest
+from secondeye.analysis.signals import FindingCounts
 from secondeye.capture.har import HarEntry, HarHeader, HarRequest, HarResponse
 
 _T0 = datetime.datetime(2026, 9, 15, 14, 2, 0, tzinfo=datetime.UTC)
@@ -210,7 +211,7 @@ class TestBuildManifest:
             classified=classified,
             flows=flows,
         )
-        assert manifest["schema_version"] == "1.0"
+        assert manifest["schema_version"] == "1.1"
         capture = manifest["capture"]
         assert isinstance(capture, dict)
         assert capture["name"] == "auth-flow-test"
@@ -339,3 +340,44 @@ class TestManifestSerializesRedirectAndPollingDetail:
         second = manifest_flows[1]
         assert second["collapsed_into"] == first["flow_id"]
         assert "polling_group" not in second
+
+
+class TestFindingsBlock:
+    """manifest.json carries a findings tally (schema 1.1).
+
+    `capture list` reads it straight off disk, so it has to be present on
+    every manifest rather than only when something was found.
+    """
+
+    def _manifest(self, findings: FindingCounts | None) -> dict[str, object]:
+        classified = classify_entries([_nav_entry(_at(0), "https://example.com/login")])
+        return build_manifest(
+            capture_name="c",
+            started_at=_at(0),
+            ended_at=_at(10),
+            targets=["example.com"],
+            target_regex=None,
+            target_all=False,
+            upstream=None,
+            no_upstream=True,
+            classified=classified,
+            flows=build_flows(classified),
+            findings=findings,
+        )
+
+    def test_block_is_present_and_zeroed_when_findings_are_omitted(self) -> None:
+        findings = self._manifest(None)["findings"]
+        assert isinstance(findings, dict)
+        assert findings["total"] == 0
+        by_kind = findings["by_kind"]
+        assert isinstance(by_kind, dict)
+        assert by_kind["secret"] == 0
+
+    def test_block_reports_supplied_counts(self) -> None:
+        findings = self._manifest(FindingCounts(secrets=2, cors=1))["findings"]
+        assert isinstance(findings, dict)
+        assert findings["total"] == 3
+        by_kind = findings["by_kind"]
+        assert isinstance(by_kind, dict)
+        assert by_kind["secret"] == 2
+        assert by_kind["cors"] == 1

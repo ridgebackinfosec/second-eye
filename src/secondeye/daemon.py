@@ -60,6 +60,8 @@ class DaemonConfig:
         upstream_insecure: Whether --upstream-insecure was set.
         target_all: Whether --target-all was set.
         cluster_window_ms: --cluster-window value.
+        captures_dir: --captures-dir value; None means the default
+            ``state_dir / "captures"``.
         max_connections: --max-connections value.
         state_dir: secondeye's state directory.
     """
@@ -77,6 +79,7 @@ class DaemonConfig:
     cluster_window_ms: int = DEFAULT_CLUSTER_WINDOW_MS
     max_connections: int = 256
     state_dir: Path = field(default_factory=default_state_dir)
+    captures_dir: Path | None = None
 
 
 class Daemon:
@@ -136,6 +139,7 @@ class Daemon:
 
         self._capture_manager = CaptureManager(
             state_dir=config.state_dir,
+            captures_dir=config.captures_dir,
             target_label=_derive_target_label(
                 config.targets, config.target_regex, config.target_all
             ),

@@ -109,9 +109,14 @@ def _other_entry(at: datetime.datetime, url: str, status: int = 204, body: bytes
     )
 
 
-def _render(entries: list[HarEntry], capture_name: str = "test-capture") -> str:
+def _render(
+    entries: list[HarEntry],
+    capture_name: str = "test-capture",
+    cluster_window_ms: int | None = None,
+) -> str:
     classified = classify_entries(entries)
     flows = build_flows(classified)
+    kwargs = {} if cluster_window_ms is None else {"cluster_window_ms": cluster_window_ms}
     return render_analysis_md(
         capture_name=capture_name,
         targets=["example.com"],
@@ -119,6 +124,7 @@ def _render(entries: list[HarEntry], capture_name: str = "test-capture") -> str:
         ended_at=_at(100),
         classified=classified,
         flows=flows,
+        **kwargs,
     )
 
 
@@ -883,3 +889,37 @@ class TestPhase3SignalsIntegration:
         assert md.index("## Capture Signals") < md.index("## Sequence Diagram")
         assert md.index("## Sequence Diagram") < md.index("## Contents")
         assert md.index("## Contents") < md.index("## Flow 1")
+
+
+class TestClusterWindowIsHonored:
+    """--cluster-window must actually reach cluster_entries() (SPEC.md §11.3).
+
+    The window decides whether a static asset joins its navigation's
+    cluster, which is observable as the '**Assets loaded (N):**' line on
+    the navigation flow. An asset arriving later than the window starts
+    its own cluster instead, so the line disappears.
+    """
+
+    def _nav_plus_late_asset(self) -> list[HarEntry]:
+        # Asset lands 3s after the navigation: outside the 2000ms default,
+        # inside a 5000ms window.
+        return [
+            _nav_entry(_at(0), "https://example.com/login"),
+            _static_entry(_at(3.0), "https://example.com/app.js", "application/javascript"),
+        ]
+
+    def test_default_window_excludes_asset_arriving_after_it(self) -> None:
+        md = _render(self._nav_plus_late_asset())
+        assert "**Assets loaded" not in md
+
+    def test_widened_window_includes_asset_arriving_within_it(self) -> None:
+        md = _render(self._nav_plus_late_asset(), cluster_window_ms=5000)
+        assert "**Assets loaded (1):**" in md
+
+    def test_narrowed_window_excludes_asset_the_default_would_include(self) -> None:
+        entries = [
+            _nav_entry(_at(0), "https://example.com/login"),
+            _static_entry(_at(1.0), "https://example.com/app.js", "application/javascript"),
+        ]
+        assert "**Assets loaded (1):**" in _render(entries)
+        assert "**Assets loaded" not in _render(entries, cluster_window_ms=500)

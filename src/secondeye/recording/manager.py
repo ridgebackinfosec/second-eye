@@ -25,6 +25,7 @@ from pathlib import Path
 
 import secondeye
 from secondeye.analysis.classify import classify_entries
+from secondeye.analysis.cluster import DEFAULT_CLUSTER_WINDOW_MS
 from secondeye.analysis.manifest import build_flows, build_manifest
 from secondeye.analysis.render import render_analysis_md
 from secondeye.capture.buffer import CaptureBuffer, read_buffer
@@ -96,7 +97,7 @@ class CaptureManager:
         target_all: bool,
         upstream: str | None,
         no_upstream: bool,
-        cluster_window_ms: int = 2000,
+        cluster_window_ms: int = DEFAULT_CLUSTER_WINDOW_MS,
     ) -> None:
         """Store fixed daemon-startup configuration for this run.
 
@@ -111,8 +112,8 @@ class CaptureManager:
             upstream: "host:port" of the configured upstream, if any.
             no_upstream: Whether --no-upstream was set.
             cluster_window_ms: Flow-clustering time window (SPEC.md
-                --cluster-window). Reserved for future use by the
-                clustering pipeline's window parameter.
+                --cluster-window), forwarded to render_analysis_md() on
+                stop so the configured value reaches cluster_entries().
         """
         self._state_dir = state_dir
         self._target_label = target_label
@@ -236,6 +237,7 @@ class CaptureManager:
             ended_at=ended_at,
             classified=classified,
             flows=flows,
+            cluster_window_ms=self._cluster_window_ms,
         )
         raw_har = _build_raw_har(entries)
 

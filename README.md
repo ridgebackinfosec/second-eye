@@ -350,11 +350,10 @@ capture:
 
 <!-- BEGIN GENERATED: proxy-status -->
 ```text
-Daemon running: yes
-Listener:       127.0.0.1:18079
-Scope:          127.0.0.1
-Upstream:       none (--no-upstream)
-Active capture: auth-flow-test (started 09:15:00, 3 requests so far)
+▌ secondeye 1.1.0   running   127.0.0.1:18079  →  none (--no-upstream)
+
+  scope     127.0.0.1
+  capture   ● auth-flow-test   3 requests   since 09:15:00
 ```
 <!-- END GENERATED: proxy-status -->
 
@@ -362,14 +361,20 @@ And the start/stop pair reports where the capture landed and how much it caught:
 
 <!-- BEGIN GENERATED: capture-stop-summary -->
 ```text
-✓ Capture started: auth-flow-test
-  Started at:  2026-03-14 09:15:00 UTC
-  Output dir:  ~/.local/state/secondeye/captures/2026-03-14_127-0-0-1/auth-flow-test/
-  Scope:       127.0.0.1
+● Recording auth-flow-test
 
-Recording in-scope traffic. Run 'secondeye capture stop' when done.
+  started   2026-03-14 09:15:00 UTC
+  output    ~/.local/state/secondeye/captures/2026-03-14_127-0-0-1/auth-flow-test/
+  scope     127.0.0.1
 
-✓ Capture stopped: auth-flow-test (3 requests, 187B)
+  Stop with secondeye capture stop
+
+✓ Stopped auth-flow-test
+
+  recorded  3 requests   187B
+  analysis  ANALYSIS.md   → hand to your AI chat
+  also      raw.har · manifest.json
+  output    ~/.local/state/secondeye/captures/2026-03-14_127-0-0-1/auth-flow-test
 ```
 <!-- END GENERATED: capture-stop-summary -->
 

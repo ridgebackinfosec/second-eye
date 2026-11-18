@@ -7,6 +7,7 @@ output differs, naming the command that fixes it.
 See scripts/generate_doc_examples.py for the mechanism.
 """
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -84,9 +85,17 @@ def test_generator_exists_and_is_not_shipped() -> None:
     assert GENERATOR.is_file(), f"missing generator at {GENERATOR}"
 
     package_root = REPO_ROOT / "src" / "secondeye"
+    # Match import statements only, not any textual mention: shipped
+    # modules may legitimately explain in a comment why their output has
+    # to stay stable for the generator (secondeye/ui.py does), and that
+    # is documentation, not a dependency.
+    importers = re.compile(
+        r"^\s*(?:import\s+\S*generate_doc_examples|from\s+\S*generate_doc_examples\s+import)",
+        re.MULTILINE,
+    )
     offenders = [
         path.relative_to(REPO_ROOT)
         for path in package_root.rglob("*.py")
-        if "generate_doc_examples" in path.read_text(encoding="utf-8")
+        if importers.search(path.read_text(encoding="utf-8"))
     ]
-    assert not offenders, f"shipped modules reference the doc generator: {offenders}"
+    assert not offenders, f"shipped modules import the doc generator: {offenders}"

@@ -25,6 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from secondeye.analysis.cluster import DEFAULT_CLUSTER_WINDOW_MS
 from secondeye.exceptions import ConfigError
 from secondeye.proxy.intercept import InterceptHandler
 from secondeye.proxy.listener import ProxyListener
@@ -73,7 +74,7 @@ class DaemonConfig:
     upstream_ca: Path | None = None
     upstream_insecure: bool = False
     target_all: bool = False
-    cluster_window_ms: int = 2000
+    cluster_window_ms: int = DEFAULT_CLUSTER_WINDOW_MS
     max_connections: int = 256
     state_dir: Path = field(default_factory=default_state_dir)
 

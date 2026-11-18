@@ -14,6 +14,7 @@ from secondeye.analysis.classify import Category, ClassifiedEntry
 from secondeye.capture.har import header_value
 
 __all__ = [
+    "DEFAULT_CLUSTER_WINDOW_MS",
     "Cluster",
     "PollingGroup",
     "RedirectChain",
@@ -21,6 +22,14 @@ __all__ = [
     "detect_polling_groups",
     "detect_redirect_chains",
 ]
+
+DEFAULT_CLUSTER_WINDOW_MS = 2000
+"""Default rolling clustering window, in milliseconds (``--cluster-window``).
+
+Declared here, next to the algorithm that consumes it, and referenced by
+every other layer (cli.py's flag default, DaemonConfig, CaptureManager,
+render_analysis_md) so the default can't drift between them.
+"""
 
 _POLLING_MIN_OCCURRENCES = 3
 _POLLING_INTERVAL_TOLERANCE = 0.2
@@ -67,7 +76,9 @@ def _cluster_referer(anchor: ClassifiedEntry) -> str | None:
     return header_value(anchor.entry.request.headers, "referer")
 
 
-def cluster_entries(entries: list[ClassifiedEntry], window_ms: int = 2000) -> list[Cluster]:
+def cluster_entries(
+    entries: list[ClassifiedEntry], window_ms: int = DEFAULT_CLUSTER_WINDOW_MS
+) -> list[Cluster]:
     """Group classified entries into clusters (SPEC.md §11.3).
 
     Primary rule: requests sharing the same Referer/Origin, within a

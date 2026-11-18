@@ -5,6 +5,53 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-18
+
+### Fixed
+- **`--cluster-window` did nothing.** The flag was accepted, documented and
+  threaded as far as `CaptureManager`, which stored it and never read it —
+  `render_analysis_md()` always called `cluster_entries()` with the
+  hardcoded 2000 ms default. Passing `--cluster-window 500` produced
+  byte-identical output to `--cluster-window 5000`. The configured value now
+  reaches the clustering pass, so it affects which static assets are
+  collapsed into their navigation's cluster in `ANALYSIS.md`. The default
+  (2000 ms) was duplicated across four modules and is now declared once as
+  `analysis/cluster.py`'s `DEFAULT_CLUSTER_WINDOW_MS`.
+- **Output written past a redirected stream.** Terminal output is now
+  resolved against `sys.stdout`/`sys.stderr` at print time rather than at
+  import time, so redirecting either stream after import works as expected.
+
+### Added
+- **`src/secondeye/ui.py`** — a single presentation layer, built on `rich`,
+  through which all human-facing output now flows. `cli.py` is reduced to
+  argparse plumbing plus control-socket calls: it builds a view dataclass
+  and hands it over. Each renderer takes a fully-resolved view and only
+  formats it, so a future `--json` can serialise the same dataclass instead
+  of re-deriving the data.
+- `FORCE_COLOR` is now honoured, so styling survives a pipe. `NO_COLOR`
+  still wins, and is now treated per no-color.org as set-and-non-empty
+  rather than merely set.
+
+### Changed
+- **All terminal output restyled.** The startup banner, `proxy status`,
+  capture start/stop, `capture list` (now a table) and `ca status` are
+  redesigned around an aligned label/value layout with a `●`/`○` recording
+  marker. `capture list`'s output path folds rather than being truncated
+  with an ellipsis, so it stays copyable.
+- **Colour is chosen for light terminals first.** Output uses only the 16
+  ANSI colours plus `bold`/`dim`, which the user's terminal theme resolves
+  against its own background; previous output hardcoded values that assumed
+  a dark background. Enforced structurally — `color_system="standard"` and
+  `highlight=False` — and asserted in `tests/test_ui.py`.
+- **`rich` moved from the `dev` extra to runtime dependencies.** It had been
+  docs-only, with CI asserting it never reached the wheel; that assertion is
+  now reversed for `rich` and re-pointed at the dev toolchain (`pytest`,
+  `mypy`, `ruff`), which is a larger tree than `rich` ever was. `SPEC.md`
+  §12 records this as a deliberate exception to the minimal-footprint rule,
+  and `SPEC.md` gains §7.1 for the human-output contract.
+- The README SVG hero now shows the program's real colour, since the
+  generator's long-standing `FORCE_COLOR=1` is finally honoured.
+
 ## [1.0.4] - 2026-11-17
 
 ### Fixed

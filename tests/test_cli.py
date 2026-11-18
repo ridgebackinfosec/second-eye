@@ -130,9 +130,9 @@ class TestCaStatus:
         assert exit_code == 0
         out = capsys.readouterr().out
         assert "secondeye Root CA" in out
-        assert "Fingerprint:" in out
-        assert "Valid from:" in out
-        assert "Valid until:" in out
+        assert "sha256" in out
+        assert "from" in out
+        assert "until" in out
         assert "days remaining" in out
         assert "secondeye-ca.pem" in out
 
@@ -155,7 +155,7 @@ class TestCommandsWithoutRunningDaemon:
     ) -> None:
         exit_code = cli.main(["proxy", "status"])
         assert exit_code == 0
-        assert "Daemon running: no" in capsys.readouterr().out
+        assert "not running" in capsys.readouterr().out
 
     def test_proxy_stop_reports_no_daemon(self, capsys: pytest.CaptureFixture[str]) -> None:
         exit_code = cli.main(["proxy", "stop"])
@@ -292,12 +292,12 @@ class TestStartupBanner:
     ) -> None:
         proc = _spawn_daemon_subprocess(_isolated_home, "--target", "example.com")
         try:
-            text = "".join(_read_lines_with_timeout(proc, num_lines=6))
-            assert "secondeye started" in text
-            assert "Listening:" in text
-            assert "Scope:" in text
+            text = "".join(_read_lines_with_timeout(proc, num_lines=8))
+            assert "secondeye" in text
+            assert "listening" in text
+            assert "scope" in text
             assert "example.com" in text
-            assert "Upstream:" in text
+            assert "upstream" in text
             assert "none (--no-upstream)" in text
             assert "secondeye capture start" in text
         finally:
@@ -308,15 +308,15 @@ class TestStartupBanner:
     ) -> None:
         proc = _spawn_daemon_subprocess(_isolated_home, "--target", "example.com", "-q")
         try:
-            text = "".join(_read_lines_with_timeout(proc, num_lines=6))
-            assert "secondeye started" in text
+            text = "".join(_read_lines_with_timeout(proc, num_lines=8))
+            assert "listening" in text
         finally:
             _stop_daemon_subprocess(proc, _isolated_home)
 
     def test_banner_notes_new_ca_on_first_run(self, tmp_path: Path, _isolated_home: Path) -> None:
         proc = _spawn_daemon_subprocess(_isolated_home, "--target", "example.com")
         try:
-            text = "".join(_read_lines_with_timeout(proc, num_lines=8))
+            text = "".join(_read_lines_with_timeout(proc, num_lines=12))
             assert "new secondeye CA" in text
             assert "secondeye ca export" in text
         finally:
@@ -326,7 +326,7 @@ class TestStartupBanner:
         self, tmp_path: Path, _isolated_home: Path
     ) -> None:
         first = _spawn_daemon_subprocess(_isolated_home, "--target", "example.com")
-        _read_lines_with_timeout(first, num_lines=6)
+        _read_lines_with_timeout(first, num_lines=8)
         _stop_daemon_subprocess(first, _isolated_home)
 
         second = _spawn_daemon_subprocess(_isolated_home, "--target", "example.com")
@@ -376,7 +376,7 @@ class TestUpstreamProxyDefaultPathWiring:
 
             code, out, _err = _run_cli(capsys, "proxy", "status")
             assert code == 0
-            assert "Upstream:       127.0.0.1:8080" in out
+            assert "127.0.0.1:8080" in out
         finally:
             _stop_daemon_subprocess(proc, home)
 
@@ -446,7 +446,7 @@ class TestTargetFile:
         try:
             code, out, _err = _run_cli(capsys, "proxy", "status")
             assert code == 0
-            assert "Daemon running: yes" in out
+            assert "running" in out
             assert "only-from-file.example" in out
         finally:
             _stop_daemon_subprocess(proc, _isolated_home)
@@ -489,60 +489,6 @@ class TestTargetFile:
         )
         assert exit_code == 1
         assert "at least one" in capsys.readouterr().err
-
-
-class TestByteFormatting:
-    def test_small_values_in_bytes(self) -> None:
-        assert cli._format_bytes(500) == "500B"
-
-    def test_kilobyte_values(self) -> None:
-        assert cli._format_bytes(4300) == "4.2KB"
-
-    def test_megabyte_values(self) -> None:
-        assert cli._format_bytes(4_400_000) == "4.2MB"
-
-
-class TestColorHelpers:
-    def test_green_wraps_in_ansi_when_color_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
-        monkeypatch.delenv("NO_COLOR", raising=False)
-        monkeypatch.delenv("TERM", raising=False)
-        assert cli._green("✓") == "\033[32m✓\033[0m"
-
-    def test_red_wraps_in_ansi_when_color_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: True)
-        monkeypatch.delenv("NO_COLOR", raising=False)
-        monkeypatch.delenv("TERM", raising=False)
-        assert cli._red("✗") == "\033[31m✗\033[0m"
-
-    def test_red_no_color_when_stderr_not_a_tty(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: False)
-        assert cli._red("✗") == "✗"
-
-    def test_no_color_when_not_a_tty(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False)
-        assert cli._green("✓") == "✓"
-
-    def test_no_color_when_no_color_env_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
-        monkeypatch.setenv("NO_COLOR", "1")
-        assert cli._green("✓") == "✓"
-
-    def test_no_color_when_term_is_dumb(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
-        monkeypatch.delenv("NO_COLOR", raising=False)
-        monkeypatch.setenv("TERM", "dumb")
-        assert cli._green("✓") == "✓"
-
-    def test_yellow_wraps_in_ansi_when_color_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
-        monkeypatch.delenv("NO_COLOR", raising=False)
-        monkeypatch.delenv("TERM", raising=False)
-        assert cli._yellow("⚠") == "\033[33m⚠\033[0m"
-
-    def test_yellow_no_color_when_stdout_not_a_tty(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False)
-        assert cli._yellow("⚠") == "⚠"
 
 
 @pytest.fixture
@@ -605,40 +551,71 @@ def _run_cli(capsys: pytest.CaptureFixture[str], *args: str) -> tuple[int, str, 
 
 @pytest.mark.usefixtures("running_daemon")
 class TestColoredOutput:
+    """Colour is produced by secondeye.ui (rich) now, not by cli.py itself.
+
+    These cover the end-to-end wiring: a real command against a
+    tty-looking stream emits styling, a redirected stream emits none.
+    The colour *policy* -- 16 ANSI colours only, so that light terminals
+    stay readable -- is enforced in tests/test_ui.py.
+    """
+
+    @staticmethod
+    def _as_tty(monkeypatch: pytest.MonkeyPatch, stream: str) -> None:
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.setenv("TERM", "xterm-256color")
+        monkeypatch.setattr(getattr(cli.sys, stream), "isatty", lambda: True)
+
     def test_capture_start_success_glyph_colored_when_tty(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+        self._as_tty(monkeypatch, "stdout")
         _code, out, _err = _run_cli(capsys, "capture", "start", "--name", "colored")
-        assert "\033[32m✓\033[0m Capture started: colored" in out
+        assert "\033[1;32m● \033[0m" in out
+        assert "colored" in out
 
     def test_capture_start_success_glyph_plain_when_not_tty(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False)
         _code, out, _err = _run_cli(capsys, "capture", "start", "--name", "plain")
-        assert "✓ Capture started: plain" in out
+        assert "● Recording plain" in out
         assert "\033[" not in out
 
-    def test_daemon_running_yes_colored_green(
+    def test_proxy_status_running_marker_colored(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+        self._as_tty(monkeypatch, "stdout")
         _code, out, _err = _run_cli(capsys, "proxy", "status")
-        assert f"Daemon running: {cli._green('yes')}" in out
+        assert "\033[1;32mrunning\033[0m" in out
 
     def test_generic_error_glyph_colored_red(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        # running_daemon is already up; a second `proxy start` hits the
+        # running_daemon is already up, so a second `proxy start` hits the
         # second-instance guard's ConfigError, which main()'s generic
-        # top-level handler prints via the plain "✗ {exc}" path (distinct
-        # from capture start/stop's own command-specific error formatting).
-        monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: True)
+        # top-level handler renders through ui.error().
+        self._as_tty(monkeypatch, "stderr")
         _code, _out, err = _run_cli(
             capsys, "proxy", "start", "--target", "other.example", "--no-upstream"
         )
-        assert "\033[31m✗\033[0m" in err
+        assert "\033[1;31m✗ \033[0m" in err
+
+    def test_no_color_env_strips_styling_from_a_tty(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+        monkeypatch.setenv("NO_COLOR", "1")
+        _code, out, _err = _run_cli(capsys, "proxy", "status")
+        assert "\033[" not in out
+
+    def test_term_dumb_strips_styling_from_a_tty(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.setenv("TERM", "dumb")
+        _code, out, _err = _run_cli(capsys, "proxy", "status")
+        assert "\033[" not in out
 
 
 @pytest.mark.usefixtures("running_daemon")
@@ -674,7 +651,9 @@ class TestCaptureLifecycleOutputFormats:
         _run_cli(capsys, "capture", "start", "--name", "empty-run")
         code, out, _err = _run_cli(capsys, "capture", "stop")
         assert code == 0
-        assert "✓ Capture stopped: empty-run (0 requests, 0B)" in out
+        assert "✓ Stopped empty-run" in out
+        assert "0 requests" in out
+        assert "0B" in out
 
     def test_capture_list_reports_multiple_completed_captures(
         self, capsys: pytest.CaptureFixture[str]
@@ -700,9 +679,9 @@ class TestCaptureLifecycleOutputFormats:
         _run_cli(capsys, "capture", "start", "--name", "active-one")
         code, out, _err = _run_cli(capsys, "proxy", "status")
         assert code == 0
-        assert "Active capture: active-one (started" in out
-        assert "0 requests so far" in out
-        assert "Upstream:       none (--no-upstream)" in out
+        assert "active-one" in out
+        assert "0 requests" in out
+        assert "none (--no-upstream)" in out
 
     def test_proxy_stop_success_format(self, capsys: pytest.CaptureFixture[str]) -> None:
         code, out, _err = _run_cli(capsys, "proxy", "stop")
@@ -900,7 +879,7 @@ class TestEndToEndSubprocessDaemon:
                 timeout=10,
             )
             assert status_result.returncode == 0
-            assert "Daemon running: yes" in status_result.stdout
+            assert "running" in status_result.stdout
             assert "localhost" in status_result.stdout
 
             start_result = subprocess.run(
@@ -911,9 +890,9 @@ class TestEndToEndSubprocessDaemon:
                 timeout=10,
             )
             assert start_result.returncode == 0, start_result.stderr
-            assert "✓ Capture started: e2e" in start_result.stdout
-            assert "Output dir:" in start_result.stdout
-            assert "Scope:       localhost" in start_result.stdout
+            assert "● Recording e2e" in start_result.stdout
+            assert "output" in start_result.stdout
+            assert "localhost" in start_result.stdout
 
             curl_result = subprocess.run(
                 [
@@ -943,7 +922,8 @@ class TestEndToEndSubprocessDaemon:
                 timeout=10,
             )
             assert stop_result.returncode == 0, stop_result.stderr
-            assert "✓ Capture stopped: e2e (1 requests," in stop_result.stdout
+            assert "✓ Stopped e2e" in stop_result.stdout
+            assert "1 requests" in stop_result.stdout
 
             list_result = subprocess.run(
                 [sys.executable, "-m", "secondeye.cli", "capture", "list"],

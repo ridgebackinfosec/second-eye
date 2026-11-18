@@ -58,9 +58,17 @@ examples, in two tiers: fixture-driven ones (`ANALYSIS.md`, `manifest.json`,
 CLI help) that are pure functions over
 `tests/fixtures/demo_capture/raw.har`, and live ones (startup banner,
 `proxy status`, capture summary, the SVG hero) that drive a real daemon in a
-throwaway `HOME` against a local origin on pinned ports. `rich` is a `dev`-extra
-dependency used only for the SVG; the `test-package` CI job asserts it never
-reaches the wheel.
+throwaway `HOME` against a local origin on pinned ports. Since v1.1.0 `rich` is
+a **runtime** dependency (`src/secondeye/ui.py`), so the `test-package` CI job
+asserts the reverse of what it used to: that `rich` *is* installed with the
+wheel and `secondeye.ui` imports, while the dev toolchain (`pytest`, `mypy`,
+`ruff`) is not. The generator forces colour through its pipe with
+`FORCE_COLOR=1`, which `ui.py` honours, so the SVG hero now shows real program
+colour; the text examples strip ANSI back out. Masks in the generator
+(`_MASKS`) keep live timestamps stable — a style change *inside* a masked
+phrase would inject an escape sequence mid-match and silently break drift
+detection, which is why `proxy status` renders `since HH:MM:SS` as one styled
+segment.
 
 `CHANGELOG.md` uses Keep a Changelog's bracketed headings
 (`## [X.Y.Z] - YYYY-MM-DD`, `## [Unreleased]`) — `scripts/extract_changelog.py`
@@ -313,10 +321,25 @@ generic workflow template will reach for all three:
   next generator run and the drift test will flag it. Change the renderer or
   the capture function in `scripts/generate_doc_examples.py`, then re-run
   `python scripts/generate_doc_examples.py`.
-- **Making `rich` (or any docs-only library) a runtime dependency**, or
-  importing it from `src/secondeye`. The program's output is plain `print()`
-  and stays that way — routing it through `rich` to get prettier docs would
-  change what users see in order to change what readers see.
+- **Changing the program's output in order to improve the docs.** This rule
+  used to read "never make `rich` a runtime dependency," on the grounds that
+  routing output through `rich` to get prettier docs would change what users
+  see in order to change what readers see. As of v1.1.0 `rich` *is* a runtime
+  dependency and `src/secondeye/ui.py` renders every human-facing surface
+  with it — but that was driven by operator UX on a light terminal, not by
+  the docs, and the README SVG being nicer is now a by-product rather than a
+  motive. The original principle survives in that narrower form: the
+  direction of causation matters, and a docs-only library still must never
+  be imported from `src/secondeye` (`.github/workflows/test.yml` asserts the
+  dev toolchain never reaches the wheel, and that `rich` does).
+- **Hardcoding colour values in terminal output.** `ui.py` uses only the 16
+  ANSI colours plus `bold`/`dim`, which the user's own terminal theme
+  resolves against the user's own background. A 256-colour `greyNN`,
+  truecolor hex, or literal `white`/`black` assumes a background and breaks
+  on the opposite theme — `bold white` is invisible on a light terminal, and
+  **light terminals are the primary target**. `tests/test_ui.py` enforces
+  this structurally; `color_system="standard"` and `highlight=False` on the
+  Consoles are what make it hold even for styles rich picks itself.
 - **A bandit job in `security.yml`.** Bandit's checks already run as a
   *hard* gate via ruff's `S` rule family over the whole tree, with every
   suppression justified in `pyproject.toml`. A second soft-failed bandit

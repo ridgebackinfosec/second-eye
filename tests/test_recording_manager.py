@@ -228,3 +228,60 @@ class TestScopeSummary:
             "upstream": "127.0.0.1:8080",
             "no_upstream": False,
         }
+
+
+def _asset_entry(started_at: datetime.datetime, referer: str) -> HarEntry:
+    return HarEntry(
+        started_at=started_at,
+        time_ms=1.0,
+        request=HarRequest(
+            method="GET",
+            url="https://example.com/app.js",
+            http_version="1.1",
+            headers=(HarHeader("Referer", referer),),
+            body=b"",
+        ),
+        response=HarResponse(
+            status=200,
+            status_text="OK",
+            http_version="1.1",
+            headers=(HarHeader("Content-Type", "application/javascript"),),
+            body=b"x",
+        ),
+    )
+
+
+class TestClusterWindowReachesTheRenderer:
+    """The configured --cluster-window must affect the written ANALYSIS.md.
+
+    CaptureManager stored cluster_window_ms without ever passing it on, so
+    --cluster-window was accepted and documented but inert.
+    """
+
+    async def _analysis_for(self, tmp_path: Path, window_ms: int | None) -> str:
+        kwargs = {} if window_ms is None else {"cluster_window_ms": window_ms}
+        manager = CaptureManager(
+            state_dir=tmp_path,
+            target_label="example-com",
+            targets=["example.com"],
+            target_regex=None,
+            target_all=False,
+            upstream=None,
+            no_upstream=True,
+            **kwargs,
+        )
+        t0 = datetime.datetime(2026, 11, 18, 12, 0, 0, tzinfo=datetime.UTC)
+        manager.start_capture("window-test")
+        await manager.record_entry(_entry(started_at=t0))
+        # 3s later: outside the 2000ms default, inside a 5000ms window.
+        await manager.record_entry(
+            _asset_entry(t0 + datetime.timedelta(seconds=3), "https://example.com/page")
+        )
+        result = await manager.stop_capture()
+        return result.analysis_path.read_text(encoding="utf-8")
+
+    async def test_default_window_leaves_the_late_asset_unclustered(self, tmp_path: Path) -> None:
+        assert "**Assets loaded" not in await self._analysis_for(tmp_path, None)
+
+    async def test_configured_window_clusters_the_late_asset(self, tmp_path: Path) -> None:
+        assert "**Assets loaded (1):**" in await self._analysis_for(tmp_path, 5000)

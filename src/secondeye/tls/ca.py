@@ -20,7 +20,13 @@ from cryptography.x509.oid import NameOID
 
 from secondeye.exceptions import CertGenerationError
 
-__all__ = ["CertificateAuthority", "ca_exists", "default_state_dir", "load_or_create_ca"]
+__all__ = [
+    "CertificateAuthority",
+    "ca_exists",
+    "default_state_dir",
+    "load_ca_certificate",
+    "load_or_create_ca",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +79,33 @@ def ca_exists(state_dir: Path | None = None) -> bool:
     """
     ca_dir = (state_dir if state_dir is not None else default_state_dir()) / "ca"
     return (ca_dir / _CERT_FILENAME).exists() and (ca_dir / _KEY_FILENAME).exists()
+
+
+def load_ca_certificate(state_dir: Path | None = None) -> x509.Certificate | None:
+    """Read the persisted CA certificate, mutating nothing.
+
+    Strictly read-only, unlike :func:`load_or_create_ca`, which generates
+    a CA when none exists *and* calls :func:`_lock_down_state_dir`. Both
+    of those are wrong for a diagnostic: ``secondeye doctor`` would
+    create key material as a side effect of being run, and would silently
+    chmod the state directory — which would also make its own permission
+    check pass every time, reporting a problem as fixed instead of
+    reporting it. The private key is never touched here either, since
+    nothing read-only needs it.
+
+    Args:
+        state_dir: secondeye's state directory; defaults to
+            :func:`default_state_dir`.
+
+    Returns:
+        The CA certificate, or None if absent or unparseable.
+    """
+    resolved = state_dir if state_dir is not None else default_state_dir()
+    cert_path = resolved / "ca" / _CERT_FILENAME
+    try:
+        return x509.load_pem_x509_certificate(cert_path.read_bytes())
+    except (OSError, ValueError):
+        return None
 
 
 def _lock_down_state_dir(state_dir: Path) -> None:

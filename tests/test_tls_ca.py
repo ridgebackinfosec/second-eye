@@ -7,10 +7,15 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
 
 from secondeye.exceptions import CertGenerationError
-from secondeye.tls.ca import ca_exists, default_state_dir, load_or_create_ca
+from secondeye.tls.ca import (
+    ca_exists,
+    default_state_dir,
+    load_ca_certificate,
+    load_or_create_ca,
+)
 
 _OPENSSL_MISSING = shutil.which("openssl") is None
 
@@ -175,3 +180,40 @@ class TestCaLoadFailure:
 class TestDefaultStateDir:
     def test_default_state_dir_is_xdg_state_path(self) -> None:
         assert default_state_dir() == Path.home() / ".local" / "state" / "secondeye"
+
+
+class TestLoadCaCertificateIsReadOnly:
+    """`doctor` needs the CA cert without mutating anything.
+
+    load_or_create_ca() both generates a CA when absent and calls
+    _lock_down_state_dir(), so using it from a diagnostic would create
+    key material as a side effect and silently chmod the state directory
+    — which would also make doctor's own permission check always pass.
+    """
+
+    def test_returns_none_when_no_ca_exists(self, tmp_path: Path) -> None:
+        assert load_ca_certificate(tmp_path) is None
+
+    def test_does_not_generate_a_ca(self, tmp_path: Path) -> None:
+        load_ca_certificate(tmp_path)
+        assert not ca_exists(tmp_path)
+        assert not (tmp_path / "ca").exists()
+
+    def test_returns_the_certificate_when_one_exists(self, tmp_path: Path) -> None:
+        created = load_or_create_ca(tmp_path)
+        loaded = load_ca_certificate(tmp_path)
+        assert loaded is not None
+        assert loaded.fingerprint(hashes.SHA256()) == created.certificate.fingerprint(
+            hashes.SHA256()
+        )
+
+    def test_does_not_change_state_directory_permissions(self, tmp_path: Path) -> None:
+        load_or_create_ca(tmp_path)
+        tmp_path.chmod(0o755)
+        load_ca_certificate(tmp_path)
+        assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o755
+
+    def test_returns_none_for_an_unreadable_certificate(self, tmp_path: Path) -> None:
+        load_or_create_ca(tmp_path)
+        (tmp_path / "ca" / "secondeye-ca.pem").write_text("not a certificate", encoding="utf-8")
+        assert load_ca_certificate(tmp_path) is None

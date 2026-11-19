@@ -5,6 +5,7 @@ import datetime
 import logging
 import os
 import signal
+import socket
 import stat
 import subprocess
 from pathlib import Path
@@ -15,6 +16,15 @@ from secondeye.capture.har import HarEntry, HarHeader, HarRequest, HarResponse
 from secondeye.daemon import Daemon, DaemonConfig
 from secondeye.exceptions import ConfigError
 from secondeye.recording.control import send_request
+
+
+def _free_port() -> int:
+    """A port that was bound and released, so it is almost certainly free."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    assert isinstance(port, int)
+    return port
 
 
 def _entry() -> HarEntry:
@@ -437,3 +447,83 @@ def _has_curl() -> bool:
     import shutil
 
     return shutil.which("curl") is not None
+
+
+class TestUpstreamPreflightAtStartup:
+    """A bad --upstream-proxy must fail startup, not every connection."""
+
+    async def test_start_fails_when_the_upstream_is_unreachable(self, tmp_path: Path) -> None:
+        dead_port = _free_port()
+        daemon = Daemon(
+            DaemonConfig(
+                listen_host="127.0.0.1",
+                listen_port=0,
+                targets=["example.com"],
+                upstream_host="127.0.0.1",
+                upstream_port=dead_port,
+                upstream_insecure=True,
+                state_dir=tmp_path,
+            )
+        )
+        with pytest.raises(ConfigError, match="not reachable"):
+            await daemon.start()
+
+    async def test_no_upstream_skips_the_check_entirely(self, tmp_path: Path) -> None:
+        daemon = Daemon(
+            DaemonConfig(
+                listen_host="127.0.0.1",
+                listen_port=0,
+                targets=["example.com"],
+                no_upstream=True,
+                state_dir=tmp_path,
+            )
+        )
+        await daemon.start()
+        try:
+            assert daemon.listener_bound_port > 0
+        finally:
+            await daemon.shutdown()
+
+    async def test_failed_preflight_leaves_no_control_socket_behind(self, tmp_path: Path) -> None:
+        # The check runs before anything binds, so a second attempt after
+        # starting the upstream isn't blocked by a stale socket from the
+        # first.
+        daemon = Daemon(
+            DaemonConfig(
+                listen_host="127.0.0.1",
+                listen_port=0,
+                targets=["example.com"],
+                upstream_host="127.0.0.1",
+                upstream_port=_free_port(),
+                upstream_insecure=True,
+                state_dir=tmp_path,
+            )
+        )
+        with pytest.raises(ConfigError):
+            await daemon.start()
+        assert not (tmp_path / "control.sock").exists()
+
+    async def test_reachable_upstream_allows_startup(self, tmp_path: Path) -> None:
+        async def handle(_r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
+            w.close()
+
+        upstream = await asyncio.start_server(handle, "127.0.0.1", 0)
+        port = upstream.sockets[0].getsockname()[1]
+        daemon = Daemon(
+            DaemonConfig(
+                listen_host="127.0.0.1",
+                listen_port=0,
+                targets=["example.com"],
+                upstream_host="127.0.0.1",
+                upstream_port=port,
+                upstream_insecure=True,
+                state_dir=tmp_path,
+            )
+        )
+        try:
+            await daemon.start()
+            assert daemon.listener_bound_port > 0
+            await daemon.shutdown()
+        finally:
+            upstream.close()
+            await upstream.wait_closed()

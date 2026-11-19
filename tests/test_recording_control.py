@@ -264,3 +264,44 @@ class TestProtocolRobustness:
             assert follow_up["ok"] is True
         finally:
             await server.stop()
+
+
+class TestOverlongSocketPath:
+    """AF_UNIX caps socket paths near 108 bytes (Linux: 107 + NUL).
+
+    The control socket is derived from ``Path.home()``, so a deeply
+    nested or unusual $HOME pushes it over the limit and the bare
+    OSError ("AF_UNIX path too long") surfaces as a traceback from
+    `proxy start` -- with nothing saying which path was too long or what
+    to do. Reported as a real stumble while setting up an end-to-end run
+    under a long scratch directory.
+    """
+
+    async def test_overlong_path_raises_config_error_naming_the_limit(self, tmp_path: Path) -> None:
+        deep = tmp_path
+        while len(str(deep / "control.sock")) < 120:
+            deep = deep / "a-directory-component-of-some-length"
+        server = ControlServer(socket_path=deep / "control.sock", handlers={})
+        with pytest.raises(ConfigError) as excinfo:
+            await server.start()
+        message = str(excinfo.value)
+        assert "too long" in message
+        assert str(deep / "control.sock") in message
+
+    async def test_error_mentions_the_byte_limit_and_a_remedy(self, tmp_path: Path) -> None:
+        deep = tmp_path
+        while len(str(deep / "control.sock")) < 120:
+            deep = deep / "a-directory-component-of-some-length"
+        server = ControlServer(socket_path=deep / "control.sock", handlers={})
+        with pytest.raises(ConfigError) as excinfo:
+            await server.start()
+        message = str(excinfo.value)
+        assert "107" in message or "108" in message
+
+    async def test_a_path_within_the_limit_still_binds(self, tmp_path: Path) -> None:
+        server = ControlServer(socket_path=tmp_path / "control.sock", handlers={})
+        await server.start()
+        try:
+            assert (tmp_path / "control.sock").exists()
+        finally:
+            await server.stop()

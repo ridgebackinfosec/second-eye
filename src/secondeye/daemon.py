@@ -30,7 +30,11 @@ from secondeye.exceptions import ConfigError
 from secondeye.proxy.intercept import InterceptHandler
 from secondeye.proxy.listener import ProxyListener
 from secondeye.proxy.plain_http import PlainHttpHandler
-from secondeye.proxy.upstream import UpstreamConnector, validate_upstream_config
+from secondeye.proxy.upstream import (
+    UpstreamConnector,
+    preflight_upstream,
+    validate_upstream_config,
+)
 from secondeye.recording.control import ControlServer, build_capture_handlers
 from secondeye.recording.manager import CaptureManager
 from secondeye.scope.matcher import ScopeMatcher
@@ -217,12 +221,28 @@ class Daemon:
     async def start(self) -> None:
         """Bind the control socket and proxy listener (does not block).
 
-        The control socket is checked/bound first so that a second
-        ``proxy start`` against the same state dir gets the specific
-        "another secondeye daemon is already running" message instead of a
-        generic port-in-use error from the listener (the common case: both
-        instances use the same default --listen-address).
+        The upstream reachability check runs first, before anything is
+        bound: a daemon that cannot reach its upstream can serve no
+        traffic, so there is no point holding a socket, and failing
+        before the bind means a retry isn't blocked by a stale control
+        socket from the failed attempt.
+
+        The control socket is then checked/bound before the listener so
+        that a second ``proxy start`` against the same state dir gets the
+        specific "another secondeye daemon is already running" message
+        instead of a generic port-in-use error from the listener (the
+        common case: both instances use the same default
+        --listen-address).
+
+        Raises:
+            ConfigError: If the configured upstream proxy is unreachable,
+                the control socket path is unusable, or another daemon
+                already holds it.
         """
+        if not self._config.no_upstream:
+            assert self._config.upstream_host is not None
+            assert self._config.upstream_port is not None
+            await preflight_upstream(self._config.upstream_host, self._config.upstream_port)
         await self._control_server.start()
         await self._listener.start()
         logger.info(

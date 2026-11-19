@@ -22,19 +22,20 @@ The prose around each block is hand-written and safe to edit.
 
 <!-- BEGIN GENERATED: cli-help-root -->
 ```text
-usage: secondeye [-h] [--version] {proxy,capture,ca} ...
+usage: secondeye [-h] [--version] {proxy,capture,doctor,ca} ...
 
 A scope-gated, passive HTTP/HTTPS recording proxy for offensive security operators.
 
 positional arguments:
-  {proxy,capture,ca}
-    proxy             Run and control the recording proxy daemon.
-    capture           Control recording windows against a running proxy daemon.
-    ca                Manage secondeye's root CA and upstream trust.
+  {proxy,capture,doctor,ca}
+    proxy               Run and control the recording proxy daemon.
+    capture             Control recording windows against a running proxy daemon.
+    doctor              Check whether this machine is ready to capture, and say what isn't.
+    ca                  Manage secondeye's root CA and upstream trust.
 
 options:
-  -h, --help          show this help message and exit
-  --version, -V       show program's version number and exit
+  -h, --help            show this help message and exit
+  --version, -V         show program's version number and exit
 ```
 <!-- END GENERATED: cli-help-root -->
 
@@ -115,12 +116,13 @@ options:
 
 <!-- BEGIN GENERATED: cli-help-proxy-status -->
 ```text
-usage: secondeye proxy status [-h]
+usage: secondeye proxy status [-h] [--json]
 
 Report whether a daemon is running, its scope, and active capture.
 
 options:
   -h, --help  show this help message and exit
+  --json      Emit the status as JSON on stdout instead of a table, for scripting.
 ```
 <!-- END GENERATED: cli-help-proxy-status -->
 

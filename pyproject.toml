@@ -1,6 +1,6 @@
 [project]
 name = "second-eye"
-version = "1.2.0"
+version = "1.3.0"
 description = "Scope-gated recording proxy for offensive security engagements"
 readme = "README.md"
 requires-python = ">=3.11"

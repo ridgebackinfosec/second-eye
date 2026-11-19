@@ -5,6 +5,54 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-19
+
+### Added
+- **`secondeye doctor`** — one pass over the environment problems an operator
+  otherwise meets one at a time, each looking like a different fault: CA
+  missing or expired, state directory not `0700`, captures directory not
+  writable, listen port taken, upstream unreachable or with no trust
+  configured, `certutil` absent, shell completion inactive. Read-only; it
+  never generates a CA. Exits non-zero only on a real failure — warnings
+  alone exit 0.
+- **`secondeye ca install`** — adds the CA to every Firefox and Chromium NSS
+  profile it can find (distribution, Snap and Flatpak layouts, plus the shared
+  `~/.pki/nssdb`) via `certutil`, trusted for TLS server certificates only.
+  The system trust store is **printed, never written**: it needs `sudo`, and a
+  security tool should not quietly write to the machine's root trust.
+  `--print-only` changes nothing and prints every manual step (what to use when
+  `certutil` isn't installed, which on most distributions it isn't);
+  `--remove` undoes the NSS side; `--dry-run` lists what would change.
+- **Upstream preflight on `proxy start`.** Unless `--no-upstream` is set, the
+  upstream is TCP-probed before anything binds, and startup fails naming the
+  address and offering `--no-upstream`. Previously a wrong or stale
+  `--upstream-proxy` printed a successful banner and then failed every
+  connection.
+- **`--json`** on `proxy status`, `capture list` and `doctor`, for scripting.
+  It bypasses the renderer entirely so the output stays byte-exact whether or
+  not stdout looks like a terminal.
+- `tls/ca.py` gains `load_ca_certificate()`, a strictly read-only CA reader.
+  `load_or_create_ca()` both generates a CA and locks down the state
+  directory, so a diagnostic using it would create key material as a side
+  effect *and* silently fix the permission problem it was meant to report.
+
+### Fixed
+- **An over-long control socket path now fails with an explanation.** The path
+  derives from `Path.home()`, and `AF_UNIX` caps it at 107 bytes, so an unusual
+  or deeply nested `$HOME` produced a bare `OSError: AF_UNIX path too long`
+  traceback naming neither the path nor the limit. Now a `ConfigError` giving
+  both, plus the remedy.
+- A race in the test suite's daemon fixture teardown, which stopped an
+  already-stopping daemon and intermittently raised `ConnectionResetError`.
+
+### Changed
+- `SPEC.md` gains §4.7a (upstream preflight), §5.6 (`ca install`) and §5.7
+  (`doctor`).
+- README leads with a **topology chooser** covering all three wirings, including
+  Burp → secondeye → target (Burp's upstream proxy pointed at `:8079` with
+  `--no-upstream`), which was previously undocumented despite being a common
+  setup. Each topology states which CA has to be trusted and which doesn't.
+
 ## [1.2.0] - 2026-11-18
 
 ### Added

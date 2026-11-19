@@ -14,6 +14,7 @@ __all__ = [
     "CaptureStoreError",
     "ConfigError",
     "ScopeConfigError",
+    "TrustStoreError",
     "CertGenerationError",
     "UpstreamConnectionError",
     "CaptureControlError",
@@ -90,6 +91,15 @@ class CaptureStoreError(SecondEyeError):
 
 class ScopeConfigError(SecondEyeError):
     """Raised when scope configuration (targets/regexes) is invalid."""
+
+
+class TrustStoreError(SecondEyeError):
+    """Raised when installing the CA into a local trust store fails.
+
+    Covers a missing ``certutil`` (most distributions do not ship it by
+    default, so this is the common case rather than an edge case) and any
+    non-zero exit from it. Used by ``secondeye ca install``.
+    """
 
 
 class CertGenerationError(SecondEyeError):

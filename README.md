@@ -88,11 +88,84 @@ eval "$(register-python-argcomplete secondeye)"
 
 ---
 
+## Which wiring do you want?
+
+`secondeye` can sit in three different places. Pick one before you start — it
+determines a single flag, and getting it wrong is the most common way a first
+run fails.
+
+**1. Client → secondeye → Burp/ZAP → target.** Your browser points at
+`secondeye`, which chains out through your interception proxy. Use this when you
+want `secondeye` recording everything while you work in Burp as usual.
+
+```sh
+secondeye proxy start --target example.com --upstream-ca burp-ca.pem
+```
+
+```
+browser (proxy: 127.0.0.1:8079) → secondeye :8079 → Burp :8080 → target
+```
+
+**2. Burp/ZAP → secondeye → target.** Burp stays your browser's proxy, and
+`secondeye` sits *behind* it as Burp's own upstream proxy. Use this when you
+want Burp's full toolchain in front and `secondeye` recording what actually
+leaves for the target. Set Burp's upstream proxy (User options → Connections →
+Upstream Proxy Servers, destination `*`) to `127.0.0.1:8079`, then:
+
+```sh
+secondeye proxy start --target example.com --no-upstream
+```
+
+```
+browser (proxy: 127.0.0.1:8080) → Burp :8080 → secondeye :8079 → target
+```
+
+Note `--no-upstream` here: it means "nothing downstream of *me*", and in this
+topology `secondeye` is the last hop before the target. Your browser only needs
+to trust Burp's CA, since Burp is what terminates TLS for it; `secondeye` needs
+to trust nothing extra, because it connects onward with the normal system trust
+store.
+
+**3. Client → secondeye → target.** No interception proxy at all.
+
+```sh
+secondeye proxy start --target example.com --no-upstream
+```
+
+```
+browser (proxy: 127.0.0.1:8079) → secondeye :8079 → target
+```
+
+In topologies 1 and 3 the client talks TLS to `secondeye`, so the client must
+trust `secondeye`'s CA — that's the next section. In topology 2 it doesn't,
+because Burp is the thing your browser is talking to.
+
+---
+
 ## One-time setup: trust secondeye's CA
 
-`secondeye` terminates TLS for in-scope traffic using its own locally-generated
-root CA (never shared, never uploaded anywhere). Your client needs to trust it
-before in-scope HTTPS traffic will work.
+Needed for topologies 1 and 3 above, where your client talks TLS to `secondeye`
+directly. `secondeye` terminates TLS for in-scope traffic using its own
+locally-generated root CA (never shared, never uploaded anywhere).
+
+The quickest path is to let `secondeye` do it:
+
+```sh
+secondeye ca install
+```
+
+That adds the CA to every Firefox and Chromium profile it can find (via
+`certutil`, from `libnss3-tools` on Debian/Ubuntu/Kali or `nss-tools` on
+Fedora/RHEL), then **prints** — but never runs — the two commands to trust it
+system-wide. The system trust store needs `sudo`, and you should see the command
+that touches your machine's root trust before it runs. Restart the browser
+afterwards.
+
+`secondeye ca install --print-only` changes nothing and just prints every manual
+step, which is what to use if `certutil` isn't available. `--remove` undoes the
+NSS side.
+
+To import it by hand instead:
 
 ```sh
 secondeye ca export --format der > secondeye-ca.der
@@ -106,10 +179,25 @@ The CA is generated once on first run and persisted to
 `~/.local/state/secondeye/ca/`; every subsequent run reuses it, so you only need
 to re-import it into a given trust store once.
 
-### Chaining through Burp or ZAP
+### Check everything before you start
 
-If you're chaining `secondeye` through an intercepting proxy for manual testing,
-you also need `secondeye`'s connection *to that proxy* to trust its CA:
+```sh
+secondeye doctor
+```
+
+One pass over the things that otherwise fail one at a time and look like
+unrelated problems: whether the CA exists and is still valid, whether the state
+directory is locked down, whether the captures directory is writable, whether
+the listen port is free, whether your upstream proxy is actually reachable,
+whether `certutil` is installed, and whether shell completion is active. It
+changes nothing — in particular it never creates a CA — and exits non-zero only
+if something will genuinely stop a capture working. Add `--no-upstream` if
+that's the topology you're using, so it checks the right thing.
+
+### Trusting Burp's CA (topology 1 only)
+
+In topology 1, `secondeye` connects outward to Burp over TLS, so it needs to
+trust *Burp's* CA as well:
 
 ```sh
 secondeye ca import-upstream --from-burp --upstream-proxy 127.0.0.1:8080 --output burp-ca.pem
@@ -121,7 +209,9 @@ below). If you'd rather export it yourself: Burp/ZAP → Proxy → Options → C
 Certificate → export DER, then `openssl x509 -inform der -in burp-ca.der -out
 burp-ca.pem`.
 
-Not chaining through anything? Use `--no-upstream` instead — see below.
+Topologies 2 and 3 need none of this: `secondeye` connects straight to the
+target with the normal system trust store, which is what `--no-upstream`
+selects.
 
 ---
 
@@ -361,7 +451,7 @@ capture:
 
 <!-- BEGIN GENERATED: proxy-status -->
 ```text
-▌ secondeye 1.2.0   running   127.0.0.1:18079  →  none (--no-upstream)
+▌ secondeye 1.3.0   running   127.0.0.1:18079  →  none (--no-upstream)
 
   scope     127.0.0.1
   capture   ● auth-flow-test   3 requests   since 09:15:00
@@ -409,9 +499,13 @@ secondeye proxy stop                      # stop a daemon from another terminal
 secondeye capture list                    # every capture on disk, newest first (no daemon needed)
 secondeye capture analyze <dir>           # re-render ANALYSIS.md/manifest.json from a raw.har
 secondeye capture recover <dir>           # rebuild a capture a crashed daemon left behind
+secondeye doctor                          # is this machine ready to capture?
+secondeye ca install                      # trust the CA in Firefox/Chromium
 secondeye ca status                       # CA fingerprint/expiry; never generates one
 secondeye --version                       # print the installed version and exit
 ```
+
+`proxy status`, `capture list` and `doctor` all accept `--json` for scripting.
 
 ### Revisiting a capture
 

@@ -15,7 +15,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime
+import json
 import logging
+import shlex
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -32,9 +34,17 @@ from secondeye.analysis.pipeline import CaptureMetadata, write_capture_outputs
 from secondeye.capture.buffer import read_buffer
 from secondeye.capture.store import BUFFER_FILENAME, discover_captures, find_buffer, load_capture
 from secondeye.daemon import Daemon, DaemonConfig
+from secondeye.doctor import run_checks
 from secondeye.exceptions import ConfigError, SecondEyeError, UpstreamConnectionError
 from secondeye.recording.control import ControlSocketUnavailableError, send_request
 from secondeye.tls.ca import ca_exists, default_state_dir, load_or_create_ca
+from secondeye.tls.trust import (
+    build_install_command,
+    discover_nss_profiles,
+    install_into_profile,
+    remove_from_profile,
+    system_store_instructions,
+)
 from secondeye.ui import (
     ActiveCaptureView,
     CaptureRow,
@@ -204,11 +214,17 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Stop a running secondeye daemon from another terminal.",
         help="Stop a running secondeye daemon from another terminal.",
     ).set_defaults(handler=_cmd_proxy_stop)
-    proxy_verbs.add_parser(
+    status = proxy_verbs.add_parser(
         "status",
         description="Report whether a daemon is running, its scope, and active capture.",
         help="Report whether a daemon is running, its scope, and active capture.",
-    ).set_defaults(handler=_cmd_proxy_status)
+    )
+    status.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the status as JSON on stdout instead of a table, for scripting.",
+    )
+    status.set_defaults(handler=_cmd_proxy_status)
 
     capture = nouns.add_parser(
         "capture", help="Control recording windows against a running proxy daemon."
@@ -245,6 +261,11 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Captures directory to list. Default: <state-dir>/captures.",
+    )
+    cap_list.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the listing as JSON on stdout instead of a table, for scripting.",
     )
     cap_list.set_defaults(handler=_cmd_capture_list)
 
@@ -302,6 +323,55 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     cap_recover.set_defaults(handler=_cmd_capture_recover)
 
+    doctor = nouns.add_parser(
+        "doctor",
+        description="Check this machine is ready to capture: CA present and valid, "
+        "state directory locked down, captures directory writable, listen port free, "
+        "upstream reachable, certutil available, shell completion active. Changes "
+        "nothing — in particular it never generates a CA. Exits non-zero if any "
+        "check fails; warnings alone exit 0.",
+        help="Check whether this machine is ready to capture, and say what isn't.",
+    )
+    doctor.add_argument(
+        "--listen-address",
+        default=_DEFAULT_LISTEN,
+        help=f"The host:port to test for availability. Default: {_DEFAULT_LISTEN}.",
+    )
+    doctor.add_argument(
+        "--upstream-proxy",
+        default=_DEFAULT_UPSTREAM,
+        help=f"The upstream proxy to test for reachability. Ignored with "
+        f"--no-upstream. Default: {_DEFAULT_UPSTREAM}.",
+    )
+    doctor.add_argument(
+        "--no-upstream",
+        action="store_true",
+        help="Check the direct-connection setup instead of an upstream proxy.",
+    )
+    doctor.add_argument(
+        "--upstream-ca",
+        type=Path,
+        default=None,
+        help="Check that this upstream CA file exists and is readable.",
+    )
+    doctor.add_argument(
+        "--upstream-insecure",
+        action="store_true",
+        help="Check the setup that skips upstream TLS verification.",
+    )
+    doctor.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the report as JSON on stdout instead of a table, for scripting.",
+    )
+    doctor.add_argument(
+        "--captures-dir",
+        type=Path,
+        default=None,
+        help="Captures directory to test for writability. Default: <state-dir>/captures.",
+    )
+    doctor.set_defaults(handler=_cmd_doctor)
+
     ca = nouns.add_parser("ca", help="Manage secondeye's root CA and upstream trust.")
     ca_verbs = ca.add_subparsers(dest="verb", required=True)
 
@@ -317,6 +387,39 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Output encoding, written to stdout. Default: pem.",
     )
     ca_export.set_defaults(handler=_cmd_ca_export)
+
+    ca_install = ca_verbs.add_parser(
+        "install",
+        description="Install secondeye's CA into the local NSS trust stores "
+        "(Firefox, Chromium, and the shared ~/.pki/nssdb) using certutil, then "
+        "print the two commands to trust it system-wide. The system store needs "
+        "sudo and is never written automatically — you should see the command "
+        "that touches your root trust before it runs.",
+        help="Trust secondeye's CA in Firefox/Chromium, and print system-store steps.",
+    )
+    ca_install.add_argument(
+        "--remove",
+        action="store_true",
+        help="Remove secondeye's CA from the NSS trust stores instead of adding it.",
+    )
+    ca_install.add_argument(
+        "--print-only",
+        action="store_true",
+        help="Change nothing: just print the manual steps, including the "
+        "system-store commands. Useful when certutil isn't installed.",
+    )
+    ca_install.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List the trust stores that would be modified, without touching them.",
+    )
+    ca_install.add_argument(
+        "--home",
+        type=Path,
+        default=None,
+        help=argparse.SUPPRESS,  # test seam: search a throwaway home instead
+    )
+    ca_install.set_defaults(handler=_cmd_ca_install)
 
     ca_verbs.add_parser(
         "status",
@@ -429,12 +532,15 @@ def _cmd_proxy_stop(_args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_proxy_status(_args: argparse.Namespace) -> int:
+def _cmd_proxy_status(args: argparse.Namespace) -> int:
     try:
         response = asyncio.run(send_request(_control_socket_path(), "proxy.status"))
     except ControlSocketUnavailableError:
         # Not an error: "is it running?" was answered, and the answer is no.
-        ui.daemon_not_running()
+        if args.json:
+            _emit_json({"running": False})
+        else:
+            ui.daemon_not_running()
         return 0
     if not response.get("ok"):
         ui.error(_error_message(response))
@@ -454,6 +560,18 @@ def _cmd_proxy_status(_args: argparse.Namespace) -> int:
             started_at=_format_local_time(str(active_raw["started_at"])),
             request_count=int(str(active_raw["request_count"])),
         )
+
+    if args.json:
+        _emit_json(
+            {
+                "running": True,
+                "version": _VERSION,
+                "listen": str(result["listen"]),
+                "scope": scope,
+                "active_capture": active_raw,
+            }
+        )
+        return 0
 
     ui.proxy_status(
         StatusView(
@@ -559,6 +677,28 @@ def _cmd_capture_list(args: argparse.Namespace) -> int:
     """
     captures_dir = args.captures_dir or (default_state_dir() / "captures")
     summaries = discover_captures(captures_dir)
+    if args.json:
+        _emit_json(
+            {
+                "captures_dir": str(captures_dir),
+                "captures": [
+                    {
+                        "name": summary.name,
+                        "output_dir": str(summary.output_dir),
+                        "started_at": (
+                            None if summary.started_at is None else summary.started_at.isoformat()
+                        ),
+                        "target": summary.target,
+                        "request_count": summary.request_count,
+                        "total_bytes": summary.total_bytes,
+                        "flow_count": summary.flow_count,
+                        "finding_count": summary.finding_count,
+                    }
+                    for summary in summaries
+                ],
+            }
+        )
+        return 0
     if not summaries:
         ui.plain(f"No captures found in {captures_dir}")
         return 0
@@ -667,6 +807,55 @@ def _cmd_capture_recover(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+# doctor
+# --------------------------------------------------------------------------
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Report whether this machine is ready to capture.
+
+    Returns:
+        1 if any check failed, otherwise 0 — warnings alone are not a
+        failure, since a missing CA is created on the next ``proxy
+        start`` rather than being a blocker.
+    """
+    state_dir = default_state_dir()
+    listen_host, listen_port = _parse_host_port(args.listen_address, _DEFAULT_LISTEN_PORT)
+    upstream: tuple[str, int] | None = None
+    if not args.no_upstream:
+        upstream = _parse_host_port(args.upstream_proxy, _DEFAULT_UPSTREAM_PORT)
+
+    report = run_checks(
+        state_dir=state_dir,
+        captures_dir=args.captures_dir or (state_dir / "captures"),
+        listen_host=listen_host,
+        listen_port=listen_port,
+        upstream=upstream,
+        upstream_ca=args.upstream_ca,
+        upstream_insecure=args.upstream_insecure,
+    )
+    if args.json:
+        _emit_json(
+            {
+                "version": report.version,
+                "ready": not report.failed,
+                "checks": [
+                    {
+                        "name": check.name,
+                        "status": check.status.value,
+                        "detail": check.detail,
+                        "hint": check.hint,
+                    }
+                    for check in report.checks
+                ],
+            }
+        )
+    else:
+        ui.doctor_report(report)
+    return 1 if report.failed else 0
+
+
+# --------------------------------------------------------------------------
 # ca export/import-upstream
 # --------------------------------------------------------------------------
 
@@ -680,6 +869,56 @@ def _cmd_ca_export(args: argparse.Namespace) -> int:
         ui.warn(f"Generated a new secondeye CA (first run) at {ca.cert_path}.")
     encoding = serialization.Encoding.DER if args.format == "der" else serialization.Encoding.PEM
     sys.stdout.buffer.write(ca.certificate.public_bytes(encoding))
+    return 0
+
+
+def _cmd_ca_install(args: argparse.Namespace) -> int:
+    """Trust secondeye's CA locally, and print the system-store steps.
+
+    Read-only with respect to the CA itself: unlike every other
+    CA-touching command except ``ca status``, this never generates one,
+    because "install the CA you don't have yet" is a confusing thing to
+    do silently.
+    """
+    state_dir = default_state_dir()
+    if not ca_exists(state_dir):
+        ui.error(
+            "No CA to install yet.",
+            "Run 'secondeye proxy start ...' (or 'secondeye ca export') to create one.",
+        )
+        return 1
+    pem_path = state_dir / "ca" / "secondeye-ca.pem"
+
+    profiles = discover_nss_profiles(home=args.home)
+    if args.print_only:
+        ui.ca_install_manual(
+            str(pem_path),
+            [
+                (profile.label, shlex.join(build_install_command(profile, pem_path)))
+                for profile in profiles
+            ],
+            system_store_instructions(pem_path),
+        )
+        return 0
+
+    results: list[tuple[str, bool]] = []
+    if profiles:
+        for profile in profiles:
+            if args.dry_run:
+                results.append((profile.label, True))
+                continue
+            if args.remove:
+                results.append((profile.label, remove_from_profile(profile)))
+            else:
+                install_into_profile(profile, pem_path)
+                results.append((profile.label, True))
+
+    ui.ca_install_result(
+        results,
+        removing=args.remove,
+        dry_run=args.dry_run,
+        system_instructions=None if args.remove else system_store_instructions(pem_path),
+    )
     return 0
 
 
@@ -843,6 +1082,19 @@ def _parse_host_port(value: str, default_port: int) -> tuple[str, int]:
     if not sep:
         return value, default_port
     return host, int(port_str)
+
+
+def _emit_json(payload: dict[str, object]) -> None:
+    """Write a machine-readable payload to stdout.
+
+    Deliberately bypasses ui.py: that renders for humans, and a Console
+    would be entitled to style or wrap this. JSON output has to stay
+    byte-exact regardless of whether stdout looks like a terminal.
+
+    Args:
+        payload: JSON-serializable data.
+    """
+    print(json.dumps(payload, indent=2))
 
 
 def _scope_view(scope: dict[str, object]) -> ScopeView:

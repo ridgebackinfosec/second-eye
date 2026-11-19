@@ -189,7 +189,16 @@ in-memory history, so it survives the daemon exiting; `--captures-dir`
 (`SPEC.md` §6.5's path is now the default, not fixed); a `findings` block in
 `manifest.json` counting only *actionable* signals (`schema_version` →
 `"1.1"`); and a correction to `--cluster-window`'s `--help`, which described
-polling dedup — a thing the window does not affect at all (`SPEC.md` §11.3).
+polling dedup — a thing the window does not affect at all (`SPEC.md` §11.3). First-run
+pass (v1.3.0): `secondeye doctor` (`doctor.py`) collecting the environment
+failures an operator otherwise meets one at a time; `secondeye ca install`
+(`tls/trust.py`) automating the NSS half of trust-store setup while
+**printing, never running**, the sudo commands for the system store;
+an upstream TCP preflight on `proxy start` so a wrong `--upstream-proxy`
+fails at startup instead of on every connection; `--json` on `proxy
+status`/`capture list`/`doctor`; a clear error for a control-socket path
+exceeding AF_UNIX's 107-byte limit; and a README topology chooser covering
+all three wirings, including Burp → secondeye → target.
 
 ## Commands
 
@@ -217,6 +226,7 @@ src/secondeye/
 ├── exceptions.py         # the only exception types this codebase raises
 ├── scope/matcher.py      # --target / --target-regex / IDN matching
 ├── tls/{ca,leaf}.py      # root CA persistence; per-SNI leaf cert generation+cache
+├── tls/trust.py          # NSS trust-store install for `ca install` (certutil)
 ├── proxy/
 │   ├── sni.py             # ClientHello buffer-and-parse (no true MSG_PEEK in asyncio)
 │   ├── splice.py          # blind bidirectional relay, out-of-scope path
@@ -226,6 +236,7 @@ src/secondeye/
 │   ├── plain_http.py      # absolute-URI (non-CONNECT) in-scope path
 │   └── _http_cycle.py     # h11 request/response cycle shared by intercept+plain_http
 ├── ui.py                 # rich presentation layer; ALL human output goes through it
+├── doctor.py             # read-only environment checks behind `secondeye doctor`
 ├── capture/{har,buffer}.py            # HAR entry construction; incremental JSONL buffer
 ├── capture/store.py                   # reading finished captures back off disk
 ├── analysis/{classify,cluster,manifest,render,signals}.py  # the analysis passes
@@ -248,6 +259,13 @@ Two boundaries added in v1.2.0 are worth respecting for the same reason:
   sequence anywhere else — that is exactly what made captures
   un-re-renderable before, and a second copy lets a flushed capture and a
   re-rendered one diverge.
+- **Read-only means read-only in diagnostics.** `doctor.py` and `ca install`
+  must never create a CA or change permissions as a side effect of being run.
+  That is why `tls/ca.py` has `load_ca_certificate()` alongside
+  `load_or_create_ca()`: the latter both generates key material *and* calls
+  `_lock_down_state_dir()`, so a diagnostic built on it would silently *fix*
+  the 0700 problem it exists to report. Reach for the read-only loader in
+  anything diagnostic.
 - **`capture/store.py` owns reading captures off disk**, and splits its error
   policy on purpose: `load_capture()` *raises* when `manifest.json` is missing
   (guessing a capture's name and scope would fabricate provenance into the

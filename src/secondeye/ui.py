@@ -42,6 +42,8 @@ from rich.console import Console, Group
 from rich.table import Table
 from rich.text import Text
 
+from secondeye.doctor import CheckStatus, DoctorReport
+
 __all__ = [
     "ActiveCaptureView",
     "CaStatusView",
@@ -675,6 +677,138 @@ class Ui:
             view: The recovered capture's facts.
         """
         self._capture_summary("Recovered", view, note="rebuilt from a leftover buffer")
+
+    def doctor_report(self, report: DoctorReport) -> None:
+        """Print one row per environment check, then a verdict.
+
+        Args:
+            report: The checks and their outcomes.
+        """
+        self._header(
+            report.version,
+            Text.assemble(("environment check", _LABEL)),
+        )
+        self._out.print()
+        marker = {
+            CheckStatus.OK: ("✓", f"bold {_OK}"),
+            CheckStatus.WARN: ("⚠", f"bold {_WARN}"),
+            CheckStatus.FAIL: ("✗", f"bold {_ERR}"),
+        }
+        width = max((len(check.name) for check in report.checks), default=0)
+        for check in report.checks:
+            glyph, style = marker[check.status]
+            line = Text("  ")
+            line.append(f"{glyph} ", style=style)
+            line.append(check.name.ljust(width), style=_LABEL)
+            line.append("  ")
+            line.append(check.detail)
+            self._out.print(line)
+            if check.hint is not None and check.status is not CheckStatus.OK:
+                hint = Text(" " * (width + 6))
+                hint.append(f"→ {check.hint}", style=_LABEL)
+                self._out.print(hint)
+        self._out.print()
+        counts = report.counts
+        verdict = Text("  ")
+        if report.failed:
+            verdict.append("✗ not ready", style=f"bold {_ERR}")
+        elif counts[CheckStatus.WARN]:
+            verdict.append("✓ ready", style=f"bold {_OK}")
+            verdict.append(" — with warnings", style=_LABEL)
+        else:
+            verdict.append("✓ ready", style=f"bold {_OK}")
+        verdict.append(
+            f"   {counts[CheckStatus.OK]} passed, "
+            f"{counts[CheckStatus.WARN]} warning(s), "
+            f"{counts[CheckStatus.FAIL]} failed",
+            style=_LABEL,
+        )
+        self._out.print(verdict)
+
+    def ca_install_result(
+        self,
+        results: list[tuple[str, bool]],
+        *,
+        removing: bool = False,
+        dry_run: bool = False,
+        system_instructions: list[str] | None = None,
+    ) -> None:
+        """Report which trust stores were changed, and the manual steps left.
+
+        Args:
+            results: ``(label, changed)`` per trust store, in order.
+            removing: Whether the CA was being removed rather than added.
+            dry_run: Whether nothing was actually written.
+            system_instructions: Commands for the system store, printed
+                for the operator to run; None when removing.
+        """
+        verb = "Would remove from" if (dry_run and removing) else None
+        if verb is None:
+            verb = (
+                "Would install into"
+                if dry_run
+                else ("Removed from" if removing else "Installed into")
+            )
+        if not results:
+            self.plain("No Firefox or Chromium trust stores found in your home directory.")
+        else:
+            self._out.print(
+                Text.assemble(
+                    ("✓ ", f"bold {_OK}"), (f"{verb} {len(results)} trust store(s)", "bold")
+                )
+            )
+            self._out.print()
+            for label, changed in results:
+                line = Text("  ")
+                if changed:
+                    line.append("✓ ", style=f"bold {_OK}")
+                    line.append(label)
+                else:
+                    line.append("· ", style=_LABEL)
+                    line.append(label)
+                    line.append("   nothing to remove", style=_LABEL)
+                self._out.print(line)
+            self._out.print()
+            if not dry_run and not removing:
+                self._out.print(
+                    Text("  Restart the browser for the new trust to take effect.", style=_LABEL)
+                )
+                self._out.print()
+        if system_instructions:
+            self._system_store_block(system_instructions)
+
+    def ca_install_manual(
+        self,
+        pem_path: str,
+        store_commands: list[tuple[str, str]],
+        system_instructions: list[str],
+    ) -> None:
+        """Print every manual trust-store step, changing nothing.
+
+        Takes pre-formatted commands rather than trust-store objects, so
+        this module stays pure rendering and never has to know how a
+        certutil invocation is assembled.
+
+        Args:
+            pem_path: Path to the CA certificate, as text.
+            store_commands: ``(label, command)`` per NSS trust store.
+            system_instructions: Commands for the system store.
+        """
+        self._out.print(Text.assemble(("secondeye CA: ", "bold"), pem_path))
+        self._out.print()
+        if store_commands:
+            self._out.print(Text("  Firefox / Chromium (needs certutil):", style=_LABEL))
+            for label, command in store_commands:
+                self._out.print(Text(f"    {command}"))
+                self._out.print(Text(f"      ({label})", style=_LABEL))
+            self._out.print()
+        self._system_store_block(system_instructions)
+
+    def _system_store_block(self, instructions: list[str]) -> None:
+        """Print the system trust store commands, for the operator to run."""
+        self._out.print(Text("  System trust store (run these yourself):", style=_LABEL))
+        for command in instructions:
+            self._out.print(Text(f"    {command}"))
 
     def ca_status(self, view: CaStatusView) -> None:
         """Print the persisted CA's identity and validity.

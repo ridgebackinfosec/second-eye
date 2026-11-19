@@ -13,6 +13,7 @@ never touching the real operator's ``~/.local/state/secondeye``.
 """
 
 import asyncio
+import contextlib
 import os
 import queue
 import shutil
@@ -340,12 +341,34 @@ class TestStartupBanner:
             _stop_daemon_subprocess(second, _isolated_home)
 
 
-class TestUpstreamProxyDefaultPathWiring:
-    def test_default_upstream_proxy_flag_reaches_running_daemon(
+class TestUpstreamProxyWiring:
+    """The --upstream-proxy value must reach the daemon and `proxy status`.
+
+    This used to start a daemon on the *default* 127.0.0.1:8080 with
+    nothing listening there. Since v1.3.0 `proxy start` preflights the
+    upstream and refuses to start when it is unreachable, so the two
+    facts are now checked separately: that the default value is what the
+    parser produces (no daemon needed), and that a configured upstream is
+    reported by a running daemon (against a real stub listener).
+    """
+
+    def test_default_upstream_proxy_value_comes_from_the_parser(self) -> None:
+        parser = cli._build_parser()
+        args = parser.parse_args(["proxy", "start", "--target", "example.com"])
+        assert args.upstream_proxy == "127.0.0.1:8080"
+
+    def test_configured_upstream_is_reported_by_a_running_daemon(
         self, _isolated_home: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         home = _isolated_home
         env = {**os.environ, "HOME": str(home)}
+        # A real listener, because the daemon now refuses to start without
+        # one -- which is the whole point of the preflight.
+        stub = socket.socket()
+        stub.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        stub.bind(("127.0.0.1", 0))
+        stub.listen(8)
+        upstream_port = stub.getsockname()[1]
         proc = subprocess.Popen(
             [
                 sys.executable,
@@ -355,6 +378,8 @@ class TestUpstreamProxyDefaultPathWiring:
                 "start",
                 "--target",
                 "example.com",
+                "--upstream-proxy",
+                f"127.0.0.1:{upstream_port}",
                 "--upstream-insecure",
                 "--listen-address",
                 f"127.0.0.1:{_free_port()}",
@@ -376,9 +401,37 @@ class TestUpstreamProxyDefaultPathWiring:
 
             code, out, _err = _run_cli(capsys, "proxy", "status")
             assert code == 0
-            assert "127.0.0.1:8080" in out
+            assert f"127.0.0.1:{upstream_port}" in out
         finally:
             _stop_daemon_subprocess(proc, home)
+            stub.close()
+
+    def test_unreachable_upstream_refuses_to_start(self, _isolated_home: Path) -> None:
+        home = _isolated_home
+        env = {**os.environ, "HOME": str(home)}
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "secondeye.cli",
+                "proxy",
+                "start",
+                "--target",
+                "example.com",
+                "--upstream-proxy",
+                f"127.0.0.1:{_free_port()}",
+                "--upstream-insecure",
+                "--listen-address",
+                f"127.0.0.1:{_free_port()}",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 1
+        assert "not reachable" in result.stderr
+        assert "--no-upstream" in result.stderr
 
 
 class TestTargetFile:
@@ -535,7 +588,13 @@ def running_daemon(_isolated_home: Path) -> object:
 
     yield
 
-    cli.main(["proxy", "stop"])
+    # Tolerate the daemon already being on its way out: a test may have
+    # run `proxy stop` itself (test_proxy_stop_success_format does), and
+    # a second stop then races the control socket closing mid-request,
+    # which surfaced intermittently as a ConnectionResetError in
+    # teardown. Shutting down is the goal here, not asserting on it.
+    with contextlib.suppress(ConnectionResetError, BrokenPipeError, OSError):
+        cli.main(["proxy", "stop"])
     try:
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:

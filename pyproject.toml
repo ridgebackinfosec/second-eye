@@ -1,6 +1,6 @@
 [project]
 name = "second-eye"
-version = "1.0.4"
+version = "1.3.0"
 description = "Scope-gated recording proxy for offensive security engagements"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -39,6 +39,12 @@ dependencies = [
     "h11>=0.14,<0.15",
     "idna>=3.6,<4.0",
     "argcomplete>=3.1,<4.0",
+    # Runtime: secondeye/ui.py renders every human-facing surface with it.
+    # This was a dev-extra/docs-only dependency through v1.0.x; it became a
+    # runtime one in v1.1.0 when the program's own output moved onto it. The
+    # docs generator still uses it for the README SVG, which is now a
+    # by-product of the program being styled rather than the reason for it.
+    "rich>=13.7,<15.0",
 ]
 
 [project.urls]
@@ -53,12 +59,6 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6",
     "mypy>=1.11",
-    # Docs tooling only: scripts/generate_doc_examples.py uses it to wrap a
-    # captured terminal session as an SVG for README.md. It is deliberately
-    # NOT a runtime dependency — nothing under src/secondeye imports rich, the
-    # program's own output is plain print(), and the test-package CI job
-    # asserts rich never reaches the built wheel.
-    "rich>=13.0,<15.0",
 ]
 
 [project.scripts]

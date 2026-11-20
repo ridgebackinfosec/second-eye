@@ -11,8 +11,10 @@ from pathlib import Path
 
 __all__ = [
     "SecondEyeError",
+    "CaptureStoreError",
     "ConfigError",
     "ScopeConfigError",
+    "TrustStoreError",
     "CertGenerationError",
     "UpstreamConnectionError",
     "CaptureControlError",
@@ -74,8 +76,30 @@ class NoActiveCaptureError(CaptureControlError):
     """Raised by capture stop (or a record attempt) when no capture is active."""
 
 
+class CaptureStoreError(SecondEyeError):
+    """Raised when a capture on disk can't be read back.
+
+    Covers a missing or non-directory capture path, an absent or
+    unparseable ``raw.har``/``manifest.json``, and a missing JSONL
+    buffer. Used by ``secondeye capture analyze``/``recover``/``list``,
+    which operate on whatever is already on disk rather than on a
+    capture the running daemon still holds -- so every one of these is a
+    condition the operator can hit by pointing at the wrong path, and
+    each needs to say which file was wrong.
+    """
+
+
 class ScopeConfigError(SecondEyeError):
     """Raised when scope configuration (targets/regexes) is invalid."""
+
+
+class TrustStoreError(SecondEyeError):
+    """Raised when installing the CA into a local trust store fails.
+
+    Covers a missing ``certutil`` (most distributions do not ship it by
+    default, so this is the common case rather than an edge case) and any
+    non-zero exit from it. Used by ``secondeye ca install``.
+    """
 
 
 class CertGenerationError(SecondEyeError):

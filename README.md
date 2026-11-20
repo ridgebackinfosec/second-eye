@@ -88,11 +88,84 @@ eval "$(register-python-argcomplete secondeye)"
 
 ---
 
+## Which wiring do you want?
+
+`secondeye` can sit in three different places. Pick one before you start — it
+determines a single flag, and getting it wrong is the most common way a first
+run fails.
+
+**1. Client → secondeye → Burp/ZAP → target.** Your browser points at
+`secondeye`, which chains out through your interception proxy. Use this when you
+want `secondeye` recording everything while you work in Burp as usual.
+
+```sh
+secondeye proxy start --target example.com --upstream-ca burp-ca.pem
+```
+
+```
+browser (proxy: 127.0.0.1:8079) → secondeye :8079 → Burp :8080 → target
+```
+
+**2. Burp/ZAP → secondeye → target.** Burp stays your browser's proxy, and
+`secondeye` sits *behind* it as Burp's own upstream proxy. Use this when you
+want Burp's full toolchain in front and `secondeye` recording what actually
+leaves for the target. Set Burp's upstream proxy (User options → Connections →
+Upstream Proxy Servers, destination `*`) to `127.0.0.1:8079`, then:
+
+```sh
+secondeye proxy start --target example.com --no-upstream
+```
+
+```
+browser (proxy: 127.0.0.1:8080) → Burp :8080 → secondeye :8079 → target
+```
+
+Note `--no-upstream` here: it means "nothing downstream of *me*", and in this
+topology `secondeye` is the last hop before the target. Your browser only needs
+to trust Burp's CA, since Burp is what terminates TLS for it; `secondeye` needs
+to trust nothing extra, because it connects onward with the normal system trust
+store.
+
+**3. Client → secondeye → target.** No interception proxy at all.
+
+```sh
+secondeye proxy start --target example.com --no-upstream
+```
+
+```
+browser (proxy: 127.0.0.1:8079) → secondeye :8079 → target
+```
+
+In topologies 1 and 3 the client talks TLS to `secondeye`, so the client must
+trust `secondeye`'s CA — that's the next section. In topology 2 it doesn't,
+because Burp is the thing your browser is talking to.
+
+---
+
 ## One-time setup: trust secondeye's CA
 
-`secondeye` terminates TLS for in-scope traffic using its own locally-generated
-root CA (never shared, never uploaded anywhere). Your client needs to trust it
-before in-scope HTTPS traffic will work.
+Needed for topologies 1 and 3 above, where your client talks TLS to `secondeye`
+directly. `secondeye` terminates TLS for in-scope traffic using its own
+locally-generated root CA (never shared, never uploaded anywhere).
+
+The quickest path is to let `secondeye` do it:
+
+```sh
+secondeye ca install
+```
+
+That adds the CA to every Firefox and Chromium profile it can find (via
+`certutil`, from `libnss3-tools` on Debian/Ubuntu/Kali or `nss-tools` on
+Fedora/RHEL), then **prints** — but never runs — the two commands to trust it
+system-wide. The system trust store needs `sudo`, and you should see the command
+that touches your machine's root trust before it runs. Restart the browser
+afterwards.
+
+`secondeye ca install --print-only` changes nothing and just prints every manual
+step, which is what to use if `certutil` isn't available. `--remove` undoes the
+NSS side.
+
+To import it by hand instead:
 
 ```sh
 secondeye ca export --format der > secondeye-ca.der
@@ -106,10 +179,25 @@ The CA is generated once on first run and persisted to
 `~/.local/state/secondeye/ca/`; every subsequent run reuses it, so you only need
 to re-import it into a given trust store once.
 
-### Chaining through Burp or ZAP
+### Check everything before you start
 
-If you're chaining `secondeye` through an intercepting proxy for manual testing,
-you also need `secondeye`'s connection *to that proxy* to trust its CA:
+```sh
+secondeye doctor
+```
+
+One pass over the things that otherwise fail one at a time and look like
+unrelated problems: whether the CA exists and is still valid, whether the state
+directory is locked down, whether the captures directory is writable, whether
+the listen port is free, whether your upstream proxy is actually reachable,
+whether `certutil` is installed, and whether shell completion is active. It
+changes nothing — in particular it never creates a CA — and exits non-zero only
+if something will genuinely stop a capture working. Add `--no-upstream` if
+that's the topology you're using, so it checks the right thing.
+
+### Trusting Burp's CA (topology 1 only)
+
+In topology 1, `secondeye` connects outward to Burp over TLS, so it needs to
+trust *Burp's* CA as well:
 
 ```sh
 secondeye ca import-upstream --from-burp --upstream-proxy 127.0.0.1:8080 --output burp-ca.pem
@@ -121,7 +209,9 @@ below). If you'd rather export it yourself: Burp/ZAP → Proxy → Options → C
 Certificate → export DER, then `openssl x509 -inform der -in burp-ca.der -out
 burp-ca.pem`.
 
-Not chaining through anything? Use `--no-upstream` instead — see below.
+Topologies 2 and 3 need none of this: `secondeye` connects straight to the
+target with the normal system trust store, which is what `--no-upstream`
+selects.
 
 ---
 
@@ -295,7 +385,7 @@ redirect-chain detail, polling-group collapsing, and timing-outlier notes.
 <!-- BEGIN GENERATED: manifest-excerpt -->
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "capture": {
     "name": "auth-flow-test",
     "started_at": "2026-03-14T09:15:00Z",
@@ -324,6 +414,17 @@ redirect-chain detail, polling-group collapsing, and timing-outlier notes.
       "app.example-corp.com"
     ]
   },
+  "findings": {
+    "total": 0,
+    "by_kind": {
+      "debug_page": 0,
+      "secret": 0,
+      "cookie_flag": 0,
+      "cors": 0,
+      "id_reuse": 0,
+      "legacy_http": 0
+    }
+  },
   "flows": [
     {
       "flow_id": 1,
@@ -350,11 +451,10 @@ capture:
 
 <!-- BEGIN GENERATED: proxy-status -->
 ```text
-Daemon running: yes
-Listener:       127.0.0.1:18079
-Scope:          127.0.0.1
-Upstream:       none (--no-upstream)
-Active capture: auth-flow-test (started 09:15:00, 3 requests so far)
+▌ secondeye 1.3.0   running   127.0.0.1:18079  →  none (--no-upstream)
+
+  scope     127.0.0.1
+  capture   ● auth-flow-test   3 requests   since 09:15:00
 ```
 <!-- END GENERATED: proxy-status -->
 
@@ -362,14 +462,20 @@ And the start/stop pair reports where the capture landed and how much it caught:
 
 <!-- BEGIN GENERATED: capture-stop-summary -->
 ```text
-✓ Capture started: auth-flow-test
-  Started at:  2026-03-14 09:15:00 UTC
-  Output dir:  ~/.local/state/secondeye/captures/2026-03-14_127-0-0-1/auth-flow-test/
-  Scope:       127.0.0.1
+● Recording auth-flow-test
 
-Recording in-scope traffic. Run 'secondeye capture stop' when done.
+  started   2026-03-14 09:15:00 UTC
+  output    ~/.local/state/secondeye/captures/2026-03-14_127-0-0-1/auth-flow-test/
+  scope     127.0.0.1
 
-✓ Capture stopped: auth-flow-test (3 requests, 187B)
+  Stop with secondeye capture stop
+
+✓ Stopped auth-flow-test
+
+  recorded  3 requests   187B   3 flows
+  analysis  ANALYSIS.md   → hand to your AI chat
+  also      raw.har · manifest.json
+  output    ~/.local/state/secondeye/captures/2026-03-14_127-0-0-1/auth-flow-test
 ```
 <!-- END GENERATED: capture-stop-summary -->
 
@@ -390,10 +496,65 @@ capture before exiting, so you never lose a capture by forgetting to run
 ```
 secondeye proxy status                    # daemon running? scope? active capture + live count?
 secondeye proxy stop                      # stop a daemon from another terminal
-secondeye capture list                    # captures completed so far this run
+secondeye capture list                    # every capture on disk, newest first (no daemon needed)
+secondeye capture analyze <dir>           # re-render ANALYSIS.md/manifest.json from a raw.har
+secondeye capture recover <dir>           # rebuild a capture a crashed daemon left behind
+secondeye doctor                          # is this machine ready to capture?
+secondeye ca install                      # trust the CA in Firefox/Chromium
 secondeye ca status                       # CA fingerprint/expiry; never generates one
 secondeye --version                       # print the installed version and exit
 ```
+
+`proxy status`, `capture list` and `doctor` all accept `--json` for scripting.
+
+### Revisiting a capture
+
+`capture list`, `capture analyze` and `capture recover` all read whatever is on
+disk, so none of them needs a running daemon:
+
+```sh
+secondeye capture list                    # what have I recorded?
+secondeye capture analyze ~/.local/state/secondeye/captures/2026-11-18_example-com/auth-flow-test
+```
+
+`capture analyze` re-renders `manifest.json` and `ANALYSIS.md` from a capture's
+`raw.har`. Two reasons you'd want it: `ANALYSIS.md` is written once at
+`capture stop`, so an older capture is frozen at whatever the renderer did at
+the time — re-running it brings the capture up to the current analysis, which
+matters because the derived signals grew over several releases. And
+`--cluster-window` can be changed on a re-render, so you can re-cluster a
+capture without re-recording it:
+
+```sh
+secondeye capture analyze <dir> --cluster-window 500
+```
+
+`raw.har` is never touched — it's the ground truth the re-render reads from.
+
+If a daemon dies before you run `capture stop` (`kill -9`, lost terminal, OOM),
+the incremental JSONL buffer is still on disk and the capture isn't lost:
+
+```sh
+secondeye capture recover ~/.local/state/secondeye/captures/2026-11-18_example-com/interrupted
+```
+
+That writes the same three files `capture stop` would have. A buffer records
+request/response entries only, so the recovered `manifest.json` reports an
+empty scope and a window taken from the entries' own timestamps rather than
+inventing scope configuration it has no way to know.
+
+### Keeping captures with your engagement notes
+
+By default captures land under `~/.local/state/secondeye/captures/`.
+`--captures-dir` puts them wherever you're actually working:
+
+```sh
+secondeye proxy start --target example.com --no-upstream \
+  --captures-dir ./engagement-acme/captures
+```
+
+`capture list`, `analyze` and `recover` accept the same flag, so they can find
+captures written outside the default location.
 
 See **[docs/CLI.md](docs/CLI.md)** for the full flag reference on every
 subcommand — generated from the real argument parser, so it can't drift from

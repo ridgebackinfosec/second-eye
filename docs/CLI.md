@@ -22,19 +22,20 @@ The prose around each block is hand-written and safe to edit.
 
 <!-- BEGIN GENERATED: cli-help-root -->
 ```text
-usage: secondeye [-h] [--version] {proxy,capture,ca} ...
+usage: secondeye [-h] [--version] {proxy,capture,doctor,ca} ...
 
 A scope-gated, passive HTTP/HTTPS recording proxy for offensive security operators.
 
 positional arguments:
-  {proxy,capture,ca}
-    proxy             Run and control the recording proxy daemon.
-    capture           Control recording windows against a running proxy daemon.
-    ca                Manage secondeye's root CA and upstream trust.
+  {proxy,capture,doctor,ca}
+    proxy               Run and control the recording proxy daemon.
+    capture             Control recording windows against a running proxy daemon.
+    doctor              Check whether this machine is ready to capture, and say what isn't.
+    ca                  Manage secondeye's root CA and upstream trust.
 
 options:
-  -h, --help          show this help message and exit
-  --version, -V       show program's version number and exit
+  -h, --help            show this help message and exit
+  --version, -V         show program's version number and exit
 ```
 <!-- END GENERATED: cli-help-root -->
 
@@ -52,8 +53,8 @@ usage: secondeye proxy start [-h] [--target TARGET] [-tf TARGET_FILE]
                              [--target-regex TARGET_REGEX] [--listen-address LISTEN_ADDRESS]
                              [--upstream-proxy UPSTREAM_PROXY] [--no-upstream]
                              [--upstream-ca UPSTREAM_CA] [--upstream-insecure] [--target-all]
-                             [--cluster-window CLUSTER_WINDOW] [--max-connections MAX_CONNECTIONS]
-                             [-v] [-q]
+                             [--captures-dir CAPTURES_DIR] [--cluster-window CLUSTER_WINDOW]
+                             [--max-connections MAX_CONNECTIONS] [-v] [-q]
 
 Start the secondeye daemon in the foreground. Stays running until Ctrl+C or 'secondeye proxy
 stop', auto-flushing any active capture on exit.
@@ -92,10 +93,15 @@ options:
                         the life of this daemon. Useful for flows that redirect through third-
                         party domains (OAuth/OIDC) that --target was never meant to enumerate.
                         Recording still only happens while a capture is active.
+  --captures-dir CAPTURES_DIR
+                        Directory to write capture output into, so captures can live alongside
+                        your engagement notes instead of under the state directory. Default:
+                        <state-dir>/captures (~/.local/state/secondeye/captures).
   --cluster-window CLUSTER_WINDOW
-                        Milliseconds within which repeated near-identical requests (e.g. polling)
-                        are clustered together in ANALYSIS.md instead of listed individually.
-                        Default: 2000.
+                        Milliseconds within which a request is grouped with the page navigation
+                        that preceded it, so its static assets are summarized in ANALYSIS.md
+                        rather than listed one by one. Does not affect polling deduplication,
+                        which keys off request interval rather than this window. Default: 2000.
   --max-connections MAX_CONNECTIONS
                         Maximum number of simultaneous client connections the proxy will accept.
                         Default: 256.
@@ -110,12 +116,13 @@ options:
 
 <!-- BEGIN GENERATED: cli-help-proxy-status -->
 ```text
-usage: secondeye proxy status [-h]
+usage: secondeye proxy status [-h] [--json]
 
 Report whether a daemon is running, its scope, and active capture.
 
 options:
   -h, --help  show this help message and exit
+  --json      Emit the status as JSON on stdout instead of a table, for scripting.
 ```
 <!-- END GENERATED: cli-help-proxy-status -->
 

@@ -5,6 +5,158 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-19
+
+### Added
+- **`secondeye doctor`** — one pass over the environment problems an operator
+  otherwise meets one at a time, each looking like a different fault: CA
+  missing or expired, state directory not `0700`, captures directory not
+  writable, listen port taken, upstream unreachable or with no trust
+  configured, `certutil` absent, shell completion inactive. Read-only; it
+  never generates a CA. Exits non-zero only on a real failure — warnings
+  alone exit 0.
+- **`secondeye ca install`** — adds the CA to every Firefox and Chromium NSS
+  profile it can find (distribution, Snap and Flatpak layouts, plus the shared
+  `~/.pki/nssdb`) via `certutil`, trusted for TLS server certificates only.
+  The system trust store is **printed, never written**: it needs `sudo`, and a
+  security tool should not quietly write to the machine's root trust.
+  `--print-only` changes nothing and prints every manual step (what to use when
+  `certutil` isn't installed, which on most distributions it isn't);
+  `--remove` undoes the NSS side; `--dry-run` lists what would change.
+- **Upstream preflight on `proxy start`.** Unless `--no-upstream` is set, the
+  upstream is TCP-probed before anything binds, and startup fails naming the
+  address and offering `--no-upstream`. Previously a wrong or stale
+  `--upstream-proxy` printed a successful banner and then failed every
+  connection.
+- **`--json`** on `proxy status`, `capture list` and `doctor`, for scripting.
+  It bypasses the renderer entirely so the output stays byte-exact whether or
+  not stdout looks like a terminal.
+- `tls/ca.py` gains `load_ca_certificate()`, a strictly read-only CA reader.
+  `load_or_create_ca()` both generates a CA and locks down the state
+  directory, so a diagnostic using it would create key material as a side
+  effect *and* silently fix the permission problem it was meant to report.
+
+### Fixed
+- **An over-long control socket path now fails with an explanation.** The path
+  derives from `Path.home()`, and `AF_UNIX` caps it at 107 bytes, so an unusual
+  or deeply nested `$HOME` produced a bare `OSError: AF_UNIX path too long`
+  traceback naming neither the path nor the limit. Now a `ConfigError` giving
+  both, plus the remedy.
+- A race in the test suite's daemon fixture teardown, which stopped an
+  already-stopping daemon and intermittently raised `ConnectionResetError`.
+
+### Changed
+- `SPEC.md` gains §4.7a (upstream preflight), §5.6 (`ca install`) and §5.7
+  (`doctor`).
+- README leads with a **topology chooser** covering all three wirings, including
+  Burp → secondeye → target (Burp's upstream proxy pointed at `:8079` with
+  `--no-upstream`), which was previously undocumented despite being a common
+  setup. Each topology states which CA has to be trusted and which doesn't.
+
+## [1.2.0] - 2026-11-18
+
+### Added
+- **`secondeye capture analyze <dir>`** — re-render `manifest.json` and
+  `ANALYSIS.md` from an existing capture's `raw.har`. Captures were
+  write-once, so every one stayed frozen at whichever renderer version
+  produced it, which matters because the analysis signals arrived across
+  v0.5.0, v0.6.0 and v0.7.0. Takes `--cluster-window` to re-cluster without
+  re-recording. `raw.har` is never modified, and no daemon is required.
+- **`secondeye capture recover <path>`** — rebuild a capture from the
+  incremental JSONL buffer a crashed daemon leaves behind, writing the three
+  files `capture stop` would have. Accepts a capture directory or the buffer
+  file itself; `--keep-buffer` leaves it in place, `--name` overrides the name
+  taken from the directory. A buffer carries entries only, so the recovered
+  manifest records an empty scope and a window derived from the entries' own
+  timestamps rather than inventing provenance it doesn't have.
+- **`--captures-dir`** on `proxy start`, so captures can be written beside an
+  engagement's notes instead of under the state directory. `capture list`,
+  `analyze` and `recover` accept it too. The default is unchanged, so existing
+  setups behave exactly as before.
+- `manifest.json` gains a `findings` block tallying the *actionable* signals
+  (debug pages, credential patterns, cookie-flag issues, CORS
+  misconfigurations, ID-value reuse, legacy HTTP versions). Descriptive
+  signals are deliberately excluded — they describe a capture rather than
+  flagging something to look at, and counting them would make the total
+  meaningless. `schema_version` is now `"1.1"`; the block is always present,
+  zeroed when nothing was found.
+- `capture stop` and the new commands report flow and finding counts, so "did
+  this capture find anything?" is answerable without opening `ANALYSIS.md`.
+
+### Changed
+- **`secondeye capture list` reads the captures directory instead of the
+  daemon's in-memory history.** It previously required a running daemon and
+  could only see captures from the run that was still alive. It now works with
+  no daemon, shows captures from previous runs, lists newest first, and marks
+  the active capture when a daemon happens to be up. Columns are capture,
+  requests, size, findings and start time; the capture path moved to a footer,
+  because at 80 columns a path column either truncated — making it
+  uncopyable — or crowded out every other column.
+- The render pipeline moved to `analysis/pipeline.py`, now the only place a
+  capture's three output files are written. `capture stop` is one caller of it
+  rather than the implementation, so a capture flushed by the daemon and one
+  re-rendered later cannot diverge.
+- `SPEC.md` §6.5's captures path is documented as the default rather than a
+  fixed location, and §6.2a describes revisiting a finished capture.
+
+### Fixed
+- **`--cluster-window`'s `--help` text described the wrong behaviour.** It
+  claimed to control how "repeated near-identical requests (e.g. polling)" are
+  collapsed, but polling deduplication keys off request-interval regularity
+  and is not affected by this window at all. The window governs whether a
+  request is grouped with the navigation that preceded it, which surfaces as
+  the per-navigation "Assets loaded" summary. Corrected on both `proxy start`
+  and `capture analyze`, and `SPEC.md` §11.3 now states the flag's scope
+  explicitly. (The flag itself was fixed in v1.1.0, where it did nothing at
+  all; this is the description catching up with it.)
+
+## [1.1.0] - 2026-11-18
+
+### Fixed
+- **`--cluster-window` did nothing.** The flag was accepted, documented and
+  threaded as far as `CaptureManager`, which stored it and never read it —
+  `render_analysis_md()` always called `cluster_entries()` with the
+  hardcoded 2000 ms default. Passing `--cluster-window 500` produced
+  byte-identical output to `--cluster-window 5000`. The configured value now
+  reaches the clustering pass, so it affects which static assets are
+  collapsed into their navigation's cluster in `ANALYSIS.md`. The default
+  (2000 ms) was duplicated across four modules and is now declared once as
+  `analysis/cluster.py`'s `DEFAULT_CLUSTER_WINDOW_MS`.
+- **Output written past a redirected stream.** Terminal output is now
+  resolved against `sys.stdout`/`sys.stderr` at print time rather than at
+  import time, so redirecting either stream after import works as expected.
+
+### Added
+- **`src/secondeye/ui.py`** — a single presentation layer, built on `rich`,
+  through which all human-facing output now flows. `cli.py` is reduced to
+  argparse plumbing plus control-socket calls: it builds a view dataclass
+  and hands it over. Each renderer takes a fully-resolved view and only
+  formats it, so a future `--json` can serialise the same dataclass instead
+  of re-deriving the data.
+- `FORCE_COLOR` is now honoured, so styling survives a pipe. `NO_COLOR`
+  still wins, and is now treated per no-color.org as set-and-non-empty
+  rather than merely set.
+
+### Changed
+- **All terminal output restyled.** The startup banner, `proxy status`,
+  capture start/stop, `capture list` (now a table) and `ca status` are
+  redesigned around an aligned label/value layout with a `●`/`○` recording
+  marker. `capture list`'s output path folds rather than being truncated
+  with an ellipsis, so it stays copyable.
+- **Colour is chosen for light terminals first.** Output uses only the 16
+  ANSI colours plus `bold`/`dim`, which the user's terminal theme resolves
+  against its own background; previous output hardcoded values that assumed
+  a dark background. Enforced structurally — `color_system="standard"` and
+  `highlight=False` — and asserted in `tests/test_ui.py`.
+- **`rich` moved from the `dev` extra to runtime dependencies.** It had been
+  docs-only, with CI asserting it never reached the wheel; that assertion is
+  now reversed for `rich` and re-pointed at the dev toolchain (`pytest`,
+  `mypy`, `ruff`), which is a larger tree than `rich` ever was. `SPEC.md`
+  §12 records this as a deliberate exception to the minimal-footprint rule,
+  and `SPEC.md` gains §7.1 for the human-output contract.
+- The README SVG hero now shows the program's real colour, since the
+  generator's long-standing `FORCE_COLOR=1` is finally honoured.
+
 ## [1.0.4] - 2026-11-17
 
 ### Fixed

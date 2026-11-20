@@ -1,6 +1,7 @@
 """Tests for secondeye.analysis.signals."""
 
 import datetime
+import json
 
 from secondeye.analysis.classify import classify_entries
 from secondeye.analysis.signals import (
@@ -16,6 +17,7 @@ from secondeye.analysis.signals import (
     compute_cookie_flag_issues,
     compute_cors_misconfigurations,
     compute_distinct_endpoints,
+    compute_finding_counts,
     compute_id_value_reuse,
     compute_legacy_http_versions,
     compute_parameter_names,
@@ -829,3 +831,82 @@ class TestLegacyHttpVersions:
         legacy = compute_legacy_http_versions(classified)
 
         assert legacy == [LegacyHttpVersion(http_version="1.0", count=1, first_entry_index=1)]
+
+
+class TestFindingCounts:
+    """A single tally of *actionable* findings, for at-a-glance triage.
+
+    Deliberately excludes the descriptive signals (endpoints touched,
+    auth mechanisms, status rollup, parameter names, stack hints,
+    security-header posture, timing/size outliers): those describe the
+    capture rather than flagging something to look at, so counting them
+    would make the number meaningless.
+    """
+
+    def test_clean_capture_has_no_findings(self) -> None:
+        counts = compute_finding_counts(classify_entries([_entry()]))
+        assert counts.total == 0
+
+    def test_counts_a_secret_in_a_response_body(self) -> None:
+        counts = compute_finding_counts(classify_entries([_entry(body=_EXAMPLE_JWT)]))
+        assert counts.secrets == 1
+        assert counts.total == 1
+
+    def test_counts_a_cookie_missing_flags(self) -> None:
+        counts = compute_finding_counts(
+            classify_entries(
+                [_entry(extra_response_headers=(HarHeader("Set-Cookie", "session=abc; Path=/"),))]
+            )
+        )
+        assert counts.cookie_flags == 1
+        assert counts.total == 1
+
+    def test_counts_a_cors_misconfiguration(self) -> None:
+        counts = compute_finding_counts(
+            classify_entries(
+                [
+                    _entry(
+                        extra_response_headers=(
+                            HarHeader("Access-Control-Allow-Origin", "*"),
+                            HarHeader("Access-Control-Allow-Credentials", "true"),
+                        )
+                    )
+                ]
+            )
+        )
+        assert counts.cors == 1
+        assert counts.total == 1
+
+    def test_counts_a_legacy_http_version(self) -> None:
+        counts = compute_finding_counts(classify_entries([_entry(response_http_version="1.0")]))
+        assert counts.legacy_http == 1
+        assert counts.total == 1
+
+    def test_total_sums_every_kind(self) -> None:
+        counts = compute_finding_counts(
+            classify_entries(
+                [
+                    _entry(
+                        body=_EXAMPLE_JWT,
+                        response_http_version="1.0",
+                        extra_response_headers=(HarHeader("Set-Cookie", "session=abc; Path=/"),),
+                    )
+                ]
+            )
+        )
+        assert counts.total == counts.secrets + counts.cookie_flags + counts.legacy_http
+        assert counts.total == 3
+
+    def test_descriptive_signals_are_not_counted_as_findings(self) -> None:
+        # Missing security headers and a visible Server banner are both
+        # reported in ANALYSIS.md, but neither is a finding to triage.
+        counts = compute_finding_counts(
+            classify_entries([_entry(extra_response_headers=(HarHeader("Server", "nginx"),))])
+        )
+        assert counts.total == 0
+
+    def test_manifest_dict_round_trips_through_json(self) -> None:
+        counts = compute_finding_counts(classify_entries([_entry(body=_EXAMPLE_JWT)]))
+        payload = json.loads(json.dumps(counts.to_manifest_dict()))
+        assert payload["total"] == 1
+        assert payload["by_kind"]["secret"] == 1

@@ -11,7 +11,7 @@ import datetime
 import json
 
 from secondeye.analysis.classify import Category, ClassifiedEntry
-from secondeye.analysis.cluster import Cluster, cluster_entries
+from secondeye.analysis.cluster import DEFAULT_CLUSTER_WINDOW_MS, Cluster, cluster_entries
 from secondeye.analysis.manifest import Flow
 from secondeye.analysis.signals import (
     DebugPageHint,
@@ -51,6 +51,7 @@ def render_analysis_md(
     ended_at: datetime.datetime,
     classified: list[ClassifiedEntry],
     flows: list[Flow],
+    cluster_window_ms: int = DEFAULT_CLUSTER_WINDOW_MS,
 ) -> str:
     """Render a complete ANALYSIS.md document (SPEC.md §11.7).
 
@@ -62,13 +63,15 @@ def render_analysis_md(
         classified: All of the capture's entries, classified.
         flows: This capture's flows, from build_flows() (called once and
             shared with analysis/manifest.py — see that module's docstring).
+        cluster_window_ms: Rolling clustering window in milliseconds
+            (``--cluster-window``), forwarded to cluster_entries().
 
     Returns:
         The full ANALYSIS.md markdown text.
     """
     entry_by_index = {c.index: c.entry for c in classified}
     confirmed_by_index = {c.index: c.confirmed for c in classified}
-    clusters = cluster_entries(classified)
+    clusters = cluster_entries(classified, cluster_window_ms)
     cluster_by_anchor_index = {c.anchor.index: c for c in clusters}
     timing_outliers = compute_timing_outliers(classified)
     size_outliers = compute_size_outliers(classified)

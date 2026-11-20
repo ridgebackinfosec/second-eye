@@ -38,6 +38,10 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+# sockaddr_un.sun_path is 108 bytes including the trailing NUL on Linux,
+# leaving 107 bytes of usable path.
+_MAX_UNIX_SOCKET_PATH_BYTES = 107
+
 CommandHandler = Callable[[dict[str, object]], Awaitable[dict[str, object]]]
 
 
@@ -67,11 +71,13 @@ class ControlServer:
         """Bind the control socket and begin accepting clients.
 
         Raises:
-            ConfigError: If another daemon is already listening on this
+            ConfigError: If the socket path exceeds the AF_UNIX length
+                limit, or if another daemon is already listening on this
                 socket path (see ``_is_socket_live``). A stale socket file
                 left behind by an unclean shutdown, with nothing listening
                 behind it, is unlinked and reused as before.
         """
+        self._check_path_length()
         self._socket_path.parent.mkdir(parents=True, exist_ok=True)
         if self._socket_path.exists():
             if await _is_socket_live(self._socket_path):
@@ -84,6 +90,29 @@ class ControlServer:
         self._server = await asyncio.start_unix_server(
             self._handle_client, path=str(self._socket_path)
         )
+
+    def _check_path_length(self) -> None:
+        """Reject an over-long socket path before the kernel does.
+
+        ``sockaddr_un.sun_path`` holds 108 bytes including the trailing
+        NUL, so 107 bytes of path. The control socket is derived from
+        ``Path.home()``, which makes this reachable with an unusual or
+        deeply nested $HOME — and the bare kernel error ("AF_UNIX path
+        too long") names neither the path nor the limit, so it surfaces
+        from ``proxy start`` as a traceback the operator can do nothing
+        with.
+
+        Raises:
+            ConfigError: If the path is too long for AF_UNIX.
+        """
+        encoded = len(str(self._socket_path).encode("utf-8"))
+        if encoded > _MAX_UNIX_SOCKET_PATH_BYTES:
+            raise ConfigError(
+                f"control socket path is too long for a Unix socket: "
+                f"{self._socket_path} is {encoded} bytes, and the limit is "
+                f"{_MAX_UNIX_SOCKET_PATH_BYTES}. secondeye derives this path from your "
+                "home directory, so a shorter $HOME (or a symlink to one) is the fix."
+            )
 
     async def stop(self) -> None:
         """Stop accepting clients and remove the socket file."""
@@ -252,6 +281,8 @@ def _capture_result_to_dict(result: CaptureResult) -> dict[str, object]:
         "name": result.name,
         "request_count": result.request_count,
         "total_bytes": result.total_bytes,
+        "flow_count": result.flow_count,
+        "finding_count": result.finding_count,
         "output_dir": str(result.output_dir),
         "raw_har_path": str(result.raw_har_path),
         "manifest_path": str(result.manifest_path),

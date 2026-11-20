@@ -20,15 +20,24 @@ Two connection shapes, chosen per-connection by the caller:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import ssl
 from pathlib import Path
 
 from secondeye.exceptions import ConfigError, UpstreamConnectionError
 
-__all__ = ["UpstreamConnector", "validate_upstream_config"]
+__all__ = [
+    "PREFLIGHT_TIMEOUT_SECONDS",
+    "UpstreamConnector",
+    "preflight_upstream",
+    "validate_upstream_config",
+]
 
 logger = logging.getLogger(__name__)
+
+PREFLIGHT_TIMEOUT_SECONDS = 3.0
+"""How long the startup upstream-reachability probe waits."""
 
 _CONNECT_RESPONSE_TIMEOUT = 10.0
 
@@ -54,6 +63,49 @@ def validate_upstream_config(
         raise ConfigError("--upstream-ca and --upstream-insecure are mutually exclusive")
     if not no_upstream and upstream_ca is None and not upstream_insecure:
         raise ConfigError("one of --upstream-ca, --upstream-insecure, or --no-upstream is required")
+
+
+async def preflight_upstream(host: str, port: int) -> None:
+    """Confirm the upstream proxy is accepting connections.
+
+    Called once at daemon startup. Without it a wrong or stale
+    ``--upstream-proxy`` — a typo, a Burp that isn't running yet, the
+    wrong port — still lets ``proxy start`` print a successful banner and
+    then fail every connection, leaving the operator to infer the cause
+    from per-connection log errors or a browser that simply doesn't
+    work. This converts that into one message at startup.
+
+    Only a TCP connect is attempted: nothing is sent, and no conclusion
+    is drawn about *what* is listening. Checking the listener is present
+    catches the common misconfiguration; verifying it speaks proxy
+    protocol is the job of the first real connection.
+
+    Args:
+        host: The upstream proxy's host.
+        port: The upstream proxy's port.
+    The wait is bounded by ``PREFLIGHT_TIMEOUT_SECONDS`` so that an
+    unroutable upstream makes startup *fail* rather than hang. That is a
+    module constant rather than a parameter: the daemon has no reason to
+    vary it, and ruff's ASYNC109 rightly discourages timeout parameters
+    on async functions.
+
+    Raises:
+        ConfigError: If the upstream can't be reached.
+    """
+    try:
+        _reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=PREFLIGHT_TIMEOUT_SECONDS
+        )
+    except (OSError, TimeoutError) as exc:
+        detail = "connection timed out" if isinstance(exc, TimeoutError) else str(exc)
+        raise ConfigError(
+            f"upstream proxy at {host}:{port} is not reachable ({detail}). "
+            "Start it, correct --upstream-proxy, or pass --no-upstream to connect "
+            "directly to each destination instead."
+        ) from exc
+    writer.close()
+    with contextlib.suppress(OSError):
+        await writer.wait_closed()
 
 
 class UpstreamConnector:

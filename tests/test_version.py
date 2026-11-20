@@ -7,13 +7,15 @@ it rather than carrying its own literal, or a version bump silently ships
 stale metadata in every capture. These tests fail when that drifts.
 """
 
+import datetime
+import json
 import tomllib
 from pathlib import Path
 
 import pytest
 
 import secondeye
-from secondeye.recording import manager
+from secondeye.analysis.pipeline import CaptureMetadata, write_capture_outputs
 
 _PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
 
@@ -35,8 +37,24 @@ class TestVersionSourceOfTruth:
             pytest.skip("second-eye is not installed; no metadata to compare")
         assert secondeye.__version__ == _declared_version()
 
-    def test_har_creator_version_is_not_a_hardcoded_literal(self) -> None:
-        assert manager._CREATOR_VERSION == secondeye.__version__
+    def test_har_creator_version_is_not_a_hardcoded_literal(self, tmp_path: Path) -> None:
+        # Asserts the guarantee this module's docstring actually makes, by
+        # reading a real raw.har rather than a module constant: the writer
+        # moved from recording/manager.py to analysis/pipeline.py in the
+        # v1.2.0 capture-lifecycle work, and a constant-identity check
+        # would have silently stopped covering anything.
+        outputs = write_capture_outputs(
+            tmp_path / "cap",
+            [],
+            CaptureMetadata(
+                name="version-check",
+                started_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+                ended_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+                targets=["example.com"],
+            ),
+        )
+        har = json.loads(outputs.raw_har_path.read_text(encoding="utf-8"))
+        assert har["log"]["creator"]["version"] == secondeye.__version__
 
     def test_cli_version_is_not_a_hardcoded_literal(self) -> None:
         from secondeye import cli

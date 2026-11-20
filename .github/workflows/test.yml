@@ -124,21 +124,39 @@ jobs:
       - name: Test imports
         run: python -c "import secondeye; print(secondeye.__version__)"
 
-      # rich is a docs-tooling dependency in the dev extra, used only by
-      # scripts/generate_doc_examples.py to wrap a captured terminal session
-      # as an SVG. A dev extra that quietly leaks into runtime deps is exactly
-      # the kind of thing nobody notices until a user in a constrained
-      # environment reports it, so prove it isn't installed alongside the
-      # wheel. Same check applies to any future docs-only library.
-      - name: Assert docs tooling did not leak into runtime deps
+      # A dev extra that quietly leaks into runtime deps is exactly the kind
+      # of thing nobody notices until a user in a constrained environment
+      # reports it, so prove the dev toolchain isn't installed alongside the
+      # wheel. This check named `rich` until v1.1.0, when rich became a real
+      # runtime dependency (secondeye/ui.py renders all output with it) and
+      # so had to leave the list. The check was re-pointed rather than
+      # deleted: the concern it encodes is unchanged, and the test
+      # toolchain is a larger tree than rich ever was. Add any future
+      # dev-only or docs-only library here.
+      - name: Assert dev tooling did not leak into runtime deps
         run: |
           python - <<'PY'
           import importlib.util, sys
-          leaked = [n for n in ("rich",) if importlib.util.find_spec(n) is not None]
+          dev_only = ("pytest", "mypy", "ruff", "pytest_asyncio", "pytest_cov")
+          leaked = [n for n in dev_only if importlib.util.find_spec(n) is not None]
           if leaked:
-              print(f"ERROR: docs-only package(s) installed with the wheel: {leaked}")
+              print(f"ERROR: dev-only package(s) installed with the wheel: {leaked}")
               sys.exit(1)
-          print("OK: no docs-only packages pulled in by the wheel")
+          print("OK: no dev-only packages pulled in by the wheel")
+          PY
+
+      # rich is the one former dev extra that is now load-bearing at runtime,
+      # so assert the opposite direction for it: the wheel must pull it in,
+      # or every command would fail on `import secondeye.ui`.
+      - name: Assert rich is installed as a runtime dependency
+        run: |
+          python - <<'PY'
+          import importlib.util, sys
+          if importlib.util.find_spec("rich") is None:
+              print("ERROR: rich missing; secondeye.ui cannot render any output")
+              sys.exit(1)
+          import secondeye.ui  # noqa: F401  -- proves the import actually works
+          print("OK: rich present and secondeye.ui imports")
           PY
 
       - name: Smoke test CLI

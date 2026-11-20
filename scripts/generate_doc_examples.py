@@ -297,6 +297,8 @@ _SOCKET_WAIT_SECONDS = 10.0
 _MASKS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC"), "2026-03-14 09:15:00 UTC"),
     (re.compile(r"started \d{2}:\d{2}:\d{2}"), "started 09:15:00"),
+    # `proxy status` renders the active capture's start as "since HH:MM:SS".
+    (re.compile(r"since \d{2}:\d{2}:\d{2}"), "since 09:15:00"),
     (re.compile(r"\d{4}-\d{2}-\d{2}_"), "2026-03-14_"),
 )
 

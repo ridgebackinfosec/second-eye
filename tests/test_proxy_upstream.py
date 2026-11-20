@@ -2,12 +2,18 @@
 
 import asyncio
 import ssl
+import time
 from pathlib import Path
 
 import pytest
 
 from secondeye.exceptions import ConfigError, UpstreamConnectionError
-from secondeye.proxy.upstream import UpstreamConnector, validate_upstream_config
+from secondeye.proxy import upstream as upstream_module
+from secondeye.proxy.upstream import (
+    UpstreamConnector,
+    preflight_upstream,
+    validate_upstream_config,
+)
 from secondeye.tls.ca import load_or_create_ca
 from secondeye.tls.leaf import LeafCertificateStore
 
@@ -289,3 +295,57 @@ class TestConnectTlsUpstreamTunnelMode:
         finally:
             fake_upstream.close()
             await fake_upstream.wait_closed()
+
+
+class TestUpstreamPreflight:
+    """Check the upstream is reachable before the daemon claims to be up.
+
+    Without this, a wrong or stale --upstream-proxy (typo, Burp not
+    started yet, wrong port) lets `proxy start` print a successful
+    banner and then fail every single connection -- the operator sees
+    per-connection errors in the log, or just a broken browser, rather
+    than being told the upstream isn't there.
+    """
+
+    async def test_reachable_upstream_passes(self) -> None:
+        async def handle(
+            _r: asyncio.StreamReader, w: asyncio.StreamWriter
+        ) -> None:  # pragma: no cover - connection is closed immediately
+            w.close()
+
+        server = await asyncio.start_server(handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        try:
+            await preflight_upstream("127.0.0.1", port)  # must not raise
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    async def test_unreachable_upstream_raises_config_error(self) -> None:
+        # Bind then close, so the port is almost certainly free.
+        server = await asyncio.start_server(lambda _r, _w: None, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        server.close()
+        await server.wait_closed()
+
+        with pytest.raises(ConfigError) as excinfo:
+            await preflight_upstream("127.0.0.1", port)
+        message = str(excinfo.value)
+        assert f"127.0.0.1:{port}" in message
+        assert "--no-upstream" in message
+
+    async def test_error_names_the_address_so_a_typo_is_obvious(self) -> None:
+        with pytest.raises(ConfigError) as excinfo:
+            await preflight_upstream("127.0.0.1", 1)
+        assert "127.0.0.1:1" in str(excinfo.value)
+
+    async def test_timeout_is_bounded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 203.0.113.0/24 is TEST-NET-3 (RFC 5737): reserved for
+        # documentation and guaranteed not to be routed, so a connection
+        # attempt hangs rather than being refused. The preflight must give
+        # up quickly instead of making `proxy start` appear to hang.
+        monkeypatch.setattr(upstream_module, "PREFLIGHT_TIMEOUT_SECONDS", 0.5)
+        started = time.monotonic()
+        with pytest.raises(ConfigError):
+            await preflight_upstream("203.0.113.1", 8080)
+        assert time.monotonic() - started < 5.0

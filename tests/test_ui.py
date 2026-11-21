@@ -80,6 +80,45 @@ def _status(*, recording: bool) -> ui.StatusView:
     )
 
 
+def _help_view() -> ui.HelpView:
+    """A help screen exercising every branch of the renderer.
+
+    Covers an inline-aligned entry, one whose invocation is too wide for
+    the column, a positional, a section with and without a description,
+    and both comment and command example lines.
+    """
+    return ui.HelpView(
+        usage="secondeye proxy start [-h] [--target DOMAIN] "
+        "(--upstream-ca FILE | --upstream-insecure | --no-upstream)",
+        prog="secondeye proxy start",
+        description="Start the secondeye daemon in the foreground.",
+        sections=(
+            ui.HelpSection(
+                title="Positional arguments",
+                description=None,
+                entries=(ui.HelpEntry(invocation="DIRECTORY", help_text="A capture directory."),),
+            ),
+            ui.HelpSection(
+                title="Scope",
+                description="What gets terminated and inspected.",
+                entries=(
+                    ui.HelpEntry(invocation="--target DOMAIN", help_text="A domain to scope in."),
+                    ui.HelpEntry(
+                        invocation="--upstream-ca FILE",
+                        help_text="PEM file of the upstream proxy's CA certificate, used to "
+                        "validate the secondeye-to-upstream TLS leg.",
+                    ),
+                    ui.HelpEntry(invocation="--target-all", help_text=""),
+                ),
+            ),
+        ),
+        examples=(
+            "# Connect straight to each destination.",
+            "secondeye proxy start --target example.com --no-upstream",
+        ),
+    )
+
+
 def _all_renderings() -> list[tuple[str, str, str]]:
     """Render every surface once. Returns (label, stdout, stderr) triples."""
     rendered: list[tuple[str, str, str]] = []
@@ -159,6 +198,11 @@ def _all_renderings() -> list[tuple[str, str, str]]:
             ),
             "warn": lambda: u.warn("--upstream-insecure set."),
             "plain": lambda: u.plain("No captures recorded yet this run."),
+            # help_screen returns text rather than printing it (argparse
+            # wants the string back), so route it into the same buffer
+            # the other surfaces write to.
+            "help_screen": lambda: out.write(u.help_screen(_help_view(), width=100)),
+            "help_screen_narrow": lambda: out.write(u.help_screen(_help_view(), width=40)),
         }[action]
         getattr_target()
         rendered.append((label, out.getvalue(), err.getvalue()))
@@ -178,6 +222,8 @@ def _all_renderings() -> list[tuple[str, str, str]]:
         "error_with_hint",
         "warn",
         "plain",
+        "help_screen",
+        "help_screen_narrow",
     ):
         run(action, action)
     return rendered
@@ -609,3 +655,70 @@ class TestColourEnvironmentConventions:
         u, out, _err = _ui(force_color=True)
         u.startup_banner(_startup())
         assert not _ESC.search(out.getvalue())
+
+
+class TestHelpScreenLayout:
+    """The help renderer's own layout rules, independent of the parser.
+
+    ``tests/test_cli_help.py`` covers what the real parsers say;
+    these cover how any HelpView is laid out.
+    """
+
+    def _render(self, width: int) -> str:
+        u, _out, _err = _ui(force_color=False)
+        return _ESC.sub("", u.help_screen(_help_view(), width=width))
+
+    def _body(self, width: int) -> str:
+        """The screen below the usage block.
+
+        The usage line names every flag too, so an assertion about how a
+        flag's *entry* is laid out has to look past it.
+        """
+        return self._render(width).split("\n\n", 1)[1]
+
+    def test_help_text_is_aligned_into_a_second_column(self) -> None:
+        line = next(line for line in self._body(100).splitlines() if "--target DOMAIN" in line)
+        assert "A domain to scope in." in line, "help text dropped off its flag's line"
+
+    def test_a_flag_too_wide_for_the_column_keeps_its_help_on_the_next_line(self) -> None:
+        lines = self._body(40).splitlines()
+        index = next(i for i, line in enumerate(lines) if "--upstream-ca FILE" in line)
+        assert lines[index].strip() == "--upstream-ca FILE"
+        assert "PEM file" in lines[index + 1]
+
+    def test_a_flag_name_is_never_split_across_lines(self) -> None:
+        for width in (20, 30, 40, 60, 100):
+            assert "--upstream-ca FILE" in self._render(width)
+
+    def test_a_flag_without_help_text_still_appears(self) -> None:
+        assert "--target-all" in self._render(100)
+
+    def test_section_titles_and_descriptions_both_render(self) -> None:
+        text = self._render(100)
+        assert "Scope" in text
+        assert "What gets terminated and inspected." in text
+
+    def test_examples_are_rendered_verbatim(self) -> None:
+        text = self._render(40)
+        assert "secondeye proxy start --target example.com --no-upstream" in text
+
+    def test_the_usage_prefix_appears_once(self) -> None:
+        assert self._render(100).count("usage:") == 1
+
+    def test_an_alternation_group_is_never_split(self) -> None:
+        for width in (40, 60, 100, 200):
+            assert "(--upstream-ca FILE | --upstream-insecure | --no-upstream)" in self._render(
+                width
+            )
+
+    def test_the_screen_ends_with_exactly_one_newline(self) -> None:
+        rendered = self._render(100)
+        assert rendered.endswith("\n")
+        assert not rendered.endswith("\n\n")
+
+    def test_an_empty_view_renders_just_a_usage_line(self) -> None:
+        u, _out, _err = _ui(force_color=False)
+        view = ui.HelpView(
+            usage="secondeye", prog="secondeye", description=None, sections=(), examples=()
+        )
+        assert _ESC.sub("", u.help_screen(view, width=80)).strip() == "usage: secondeye"

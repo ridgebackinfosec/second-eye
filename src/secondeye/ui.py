@@ -33,7 +33,9 @@ rendering it, rather than re-deriving the data.
 from __future__ import annotations
 
 import os
+import re
 import sys
+import textwrap
 from dataclasses import dataclass
 from typing import TextIO
 
@@ -50,6 +52,9 @@ __all__ = [
     "CaptureRow",
     "CaptureStartedView",
     "CaptureStoppedView",
+    "HelpEntry",
+    "HelpSection",
+    "HelpView",
     "ScopeView",
     "StartupView",
     "StatusView",
@@ -68,6 +73,11 @@ _ERR = "red"
 
 _LABEL_WIDTH = 10
 _INDENT = 2
+# Blank columns between a flag's invocation and its help text.
+_GUTTER = 2
+# Floor for the help column, so a very narrow terminal still wraps
+# words rather than breaking down to one character per line.
+_MIN_TEXT_WIDTH = 20
 
 
 def format_bytes(n: int) -> str:
@@ -237,6 +247,55 @@ class CaptureRow:
     finding_count: int = 0
     started_at: str = ""
     active: bool = False
+
+
+@dataclass(frozen=True)
+class HelpEntry:
+    """One flag or subcommand on a help screen.
+
+    Attributes:
+        invocation: How it is written on the command line, e.g.
+            ``"-tf, --target-file FILE"``.
+        help_text: Its one-paragraph explanation.
+    """
+
+    invocation: str
+    help_text: str
+
+
+@dataclass(frozen=True)
+class HelpSection:
+    """A titled block of help entries.
+
+    Attributes:
+        title: The section heading, e.g. ``"Scope"``.
+        description: An optional line introducing the section.
+        entries: The flags or subcommands it contains.
+    """
+
+    title: str
+    description: str | None
+    entries: tuple[HelpEntry, ...]
+
+
+@dataclass(frozen=True)
+class HelpView:
+    """Everything one ``--help`` screen shows.
+
+    Attributes:
+        usage: The usage text as one unwrapped line, without argparse's
+            ``usage: `` prefix. Wrapping it is this module's job.
+        prog: The program name, used to size the usage hanging indent.
+        description: The command's own explanation, if it has one.
+        sections: Flag/subcommand blocks, in declaration order.
+        examples: Runnable command lines, shown last.
+    """
+
+    usage: str
+    prog: str
+    description: str | None
+    sections: tuple[HelpSection, ...]
+    examples: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -837,6 +896,55 @@ class Ui:
             )
         )
 
+    def help_screen(self, view: HelpView, *, width: int | None = None) -> str:
+        """Render one ``--help`` screen.
+
+        Returns a string rather than printing, because this is called
+        from ``argparse.ArgumentParser.format_help``, whose contract is
+        to hand text back for argparse to write. Styling still obeys the
+        same stream policy as every other surface: the Console decides
+        whether to emit escapes by looking at stdout, so a piped or
+        ``NO_COLOR`` help capture comes out as plain text.
+
+        Args:
+            view: The resolved help content.
+            width: Wrap width; defaults to the detected terminal width.
+
+        Returns:
+            The rendered screen, newline-terminated.
+        """
+        console = self._out
+        columns = width or console.width
+        lines: list[Text] = _usage_lines(view.usage, view.prog, width=columns)
+        if view.description:
+            lines.append(Text())
+            lines.extend(_wrapped(view.description, width=columns, indent=0))
+
+        for section in view.sections:
+            if not section.entries:
+                continue
+            lines.append(Text())
+            lines.append(Text(section.title, style="bold"))
+            if section.description:
+                lines.extend(
+                    _wrapped(section.description, width=columns, indent=_INDENT, style=_LABEL)
+                )
+                lines.append(Text())
+            lines.extend(_entry_lines(section.entries, width=columns))
+
+        if view.examples:
+            lines.append(Text())
+            lines.append(Text("Examples", style="bold"))
+            for example in view.examples:
+                lines.append(
+                    Text(" " * _INDENT + example, style=_LABEL if _is_comment(example) else "bold")
+                )
+
+        with console.capture() as captured:
+            for line in lines:
+                console.print(line)
+        return captured.get()
+
     # -- internals ---------------------------------------------------------
 
     def _header(self, version: str, right: Text) -> None:
@@ -879,6 +987,149 @@ def _scope_block(scope: ScopeView) -> Text:
         block.append("--target-all", style=_WARN)
         block.append("   scope matching bypassed", style=_LABEL)
     return block
+
+
+def _is_comment(example: str) -> bool:
+    """Whether an example line is a comment rather than a command."""
+    return example.startswith("#")
+
+
+# Whole bracket/paren groups, else a bare token. Mirrors how argparse
+# itself tokenises a usage line, so an alternation group such as
+# ``(--a | --b | --c)`` is never split across two lines.
+_USAGE_PART = re.compile(r"\(.*?\)+(?=\s|$)|\[.*?\]+(?=\s|$)|\S+")
+
+
+def _usage_lines(usage: str, prog: str, *, width: int) -> list[Text]:
+    """Wrap a usage line, hanging-indented under the program name.
+
+    argparse can synthesise this itself, but it indents continuation
+    lines to the full width of ``usage: <prog> `` and then emits at least
+    one part per line regardless — so on a narrow terminal every
+    continuation line overflows. Wrapping here instead lets the indent
+    collapse when there isn't room for it, and keeps all of this
+    module's layout decisions in this module.
+
+    Args:
+        usage: The usage text, unwrapped, without the ``usage: `` prefix.
+        prog: The program name, used to size the hanging indent.
+        width: Total line width available.
+
+    Returns:
+        One Text per output line.
+    """
+    prefix = "usage: "
+    parts = _USAGE_PART.findall(" ".join(usage.split()))
+    hanging = len(prefix) + len(prog) + 1
+    # Collapse the alignment indent rather than overflow with it. An
+    # alternation group is one indivisible part, so a wide one -- the
+    # required upstream-trust choice, say -- can make the aligned indent
+    # unaffordable on its own.
+    longest = max((len(part) for part in parts), default=0)
+    if hanging > width // 2 or hanging + longest > width:
+        hanging = _INDENT
+
+    rows: list[str] = []
+    current = prefix
+    for part in parts:
+        if not current.strip() or current == prefix:
+            current += part
+        elif len(current) + 1 + len(part) > width:
+            rows.append(current)
+            current = " " * hanging + part
+        else:
+            current += " " + part
+    rows.append(current)
+
+    # Only the literal "usage: " is dimmed; the command line itself is
+    # what the reader is scanning for.
+    styled = [Text.assemble((prefix, _LABEL), rows[0][len(prefix) :])]
+    styled.extend(Text(row) for row in rows[1:])
+    return styled
+
+
+def _wrapped(text: str, *, width: int, indent: int, style: str = "") -> list[Text]:
+    """Word-wrap a paragraph into styled lines.
+
+    Wrapping is done here, with ``textwrap``, rather than left to rich.
+    The Consoles in this module run with ``soft_wrap=True`` (see
+    ``_console``) precisely so that rich never re-flows a line, which
+    keeps paths, regexes and fingerprints intact everywhere else — but it
+    also means help prose would run off the edge unless something wraps
+    it first.
+
+    Args:
+        text: The paragraph.
+        width: Total line width available.
+        indent: Left margin, in spaces.
+        style: Style for the whole paragraph.
+
+    Returns:
+        One Text per output line.
+    """
+    available = max(width - indent, _MIN_TEXT_WIDTH)
+    prefix = " " * indent
+    lines = textwrap.wrap(
+        " ".join(text.split()),
+        width=available,
+        # Both default to True, and both corrupt the tokens this help
+        # text is mostly made of. Hyphen-breaking turns "--no-upstream"
+        # into "--no-" + "upstream" and "<state-dir>/captures" into
+        # "<state-" + "dir>/captures"; long-word breaking chops a path
+        # mid-character. A flag name or path that overflows a narrow
+        # terminal is readable; one that has been split is a wrong
+        # answer the reader may well retype.
+        break_on_hyphens=False,
+        break_long_words=False,
+    )
+    return [Text(prefix + line, style=style) for line in lines or [""]]
+
+
+def _entry_lines(entries: tuple[HelpEntry, ...], *, width: int) -> list[Text]:
+    """Lay out a section's entries as invocation + wrapped help.
+
+    Two layouts, chosen per entry. Normally the help text sits in a
+    second column aligned across the whole section. When an invocation is
+    too long for that column, its help drops to the following line
+    instead of being squeezed into a sliver — a flag name is the one part
+    of a help screen that must never be truncated or wrapped, since it is
+    what the reader is going to type.
+
+    Args:
+        entries: The section's entries.
+        width: Total line width available.
+
+    Returns:
+        One Text per output line.
+    """
+    indent = " " * _INDENT
+    # Cap the gutter so that one long flag can't starve the help column
+    # on a narrow terminal.
+    budget = max(width // 3, _MIN_TEXT_WIDTH)
+
+    def fits(entry: HelpEntry) -> bool:
+        return len(entry.invocation) + _INDENT + _GUTTER <= budget
+
+    widths = [len(entry.invocation) for entry in entries if fits(entry)]
+    column = (max(widths) if widths else 0) + _INDENT + _GUTTER
+
+    lines: list[Text] = []
+    for entry in entries:
+        head = Text()
+        head.append(indent + entry.invocation, style=_ACCENT)
+        if not entry.help_text:
+            lines.append(head)
+            continue
+        body = _wrapped(entry.help_text, width=width, indent=column)
+        if fits(entry):
+            head.append(" " * (column - _INDENT - len(entry.invocation)))
+            head.append(body[0].plain.strip())
+            lines.append(head)
+            lines.extend(body[1:])
+        else:
+            lines.append(head)
+            lines.extend(body)
+    return lines
 
 
 def _kv(pairs: list[tuple[str, Text]]) -> Group:

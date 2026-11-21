@@ -198,7 +198,20 @@ an upstream TCP preflight on `proxy start` so a wrong `--upstream-proxy`
 fails at startup instead of on every connection; `--json` on `proxy
 status`/`capture list`/`doctor`; a clear error for a control-socket path
 exceeding AF_UNIX's 107-byte limit; and a README topology chooser covering
-all three wirings, including Burp → secondeye → target.
+all three wirings, including Burp → secondeye → target. CLI help pass
+(v1.4.0): `cli.py`'s `SecondEyeParser` overrides `format_help()` and
+renders through `ui.py`'s new `help_screen()` — chosen over a
+`formatter_class` because argparse sizes its help column from raw string
+length, so an ANSI-injecting formatter corrupts its own alignment, and
+because `-h`, `print_help()` and the doc generator all route through
+`format_help()`. All wrapping (usage line included, synthesised at
+`_UNBOUNDED_WIDTH` and re-wrapped here) lives in `ui.py`; examples are
+deliberately *not* wrapped, since a broken command line looks runnable and
+isn't. `proxy start`'s flags are grouped, and the three upstream-trust flags
+are now a **required mutually exclusive group** — the requirement was always
+enforced in `proxy/upstream.py` but appeared in no help text, and
+`--no-upstream --upstream-ca x.pem` used to be accepted with the CA silently
+ignored. `docs/CLI.md` now generates a block for all 14 subcommands (was 6).
 
 ## Commands
 

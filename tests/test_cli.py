@@ -354,7 +354,12 @@ class TestUpstreamProxyWiring:
 
     def test_default_upstream_proxy_value_comes_from_the_parser(self) -> None:
         parser = cli._build_parser()
-        args = parser.parse_args(["proxy", "start", "--target", "example.com"])
+        # --upstream-insecure only to satisfy the required trust choice;
+        # the default under test is --upstream-proxy's, which is
+        # independent of how that leg's TLS is trusted.
+        args = parser.parse_args(
+            ["proxy", "start", "--target", "example.com", "--upstream-insecure"]
+        )
         assert args.upstream_proxy == "127.0.0.1:8080"
 
     def test_configured_upstream_is_reported_by_a_running_daemon(

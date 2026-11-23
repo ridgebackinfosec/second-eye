@@ -51,6 +51,9 @@ from secondeye.ui import (
     CaptureStartedView,
     CaptureStoppedView,
     CaStatusView,
+    HelpEntry,
+    HelpSection,
+    HelpView,
     ScopeView,
     StartupView,
     StatusView,
@@ -65,6 +68,201 @@ _DEFAULT_LISTEN_PORT = 8079
 _DEFAULT_UPSTREAM_PORT = 8080
 
 _VERSION = secondeye.__version__
+
+# Width handed to argparse when synthesising a usage line we intend to
+# wrap ourselves: large enough that argparse never inserts a break.
+_UNBOUNDED_WIDTH = 10_000
+
+
+class SecondEyeParser(argparse.ArgumentParser):
+    """An ``ArgumentParser`` whose help renders through ``ui.py``.
+
+    ``--help`` was the one human-facing surface still writing raw
+    argparse output while every other surface went through the rich
+    presentation layer. Overriding ``format_help`` rather than supplying
+    a ``formatter_class`` is deliberate on two counts:
+
+    - argparse computes its help-column width from raw string length, so
+      a formatter that injected ANSI escapes would corrupt its own
+      alignment. Rendering the whole screen ourselves avoids that
+      arithmetic entirely.
+    - argparse routes ``-h``, ``print_help()``, ``print_usage()`` and
+      the documentation generator's capture through ``format_help``, so
+      one override covers every path that can produce a help screen.
+
+    ``add_subparsers`` defaults ``parser_class`` to ``type(self)``, so
+    every subparser inherits this behaviour with nothing passed per call.
+
+    Attributes:
+        examples: Runnable command lines shown under an "Examples"
+            heading. Passed as a keyword to ``add_parser``/``__init__``.
+        help_columns: Wrap width override; None means "detect".
+    """
+
+    def __init__(self, *args: object, examples: tuple[str, ...] = (), **kwargs: object) -> None:
+        self.examples = examples
+        self.help_columns: int | None = None
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+
+    def format_help(self) -> str:
+        """Render this parser's help screen.
+
+        Returns:
+            The rendered screen, as argparse's contract requires.
+        """
+        return ui.help_screen(self._help_view(), width=self.help_columns)
+
+    def _get_formatter(self) -> argparse.HelpFormatter:
+        """Build argparse's formatter, honouring ``help_columns``.
+
+        Only the usage line still comes from argparse (via
+        ``format_usage``), but argparse sizes it from its own terminal
+        detection. Without this the usage line would wrap to the real
+        terminal while the rest of the screen wrapped to the requested
+        width — visible as an over-long first line.
+
+        Returns:
+            A formatter for this parser.
+        """
+        if self.help_columns is None:
+            return super()._get_formatter()
+        return argparse.HelpFormatter(prog=self.prog, width=self.help_columns)
+
+    def _help_view(self) -> HelpView:
+        """Adapt argparse's own structures into a renderable view.
+
+        Only ``_action_groups``/``_actions`` are read from argparse's
+        internals. Both are stable across the Python versions this
+        project supports and are what every third-party argparse
+        formatter already relies on; the alternative is re-deriving
+        argument metadata that argparse has already computed.
+
+        Returns:
+            The equivalent HelpView.
+        """
+        positionals: list[HelpSection] = []
+        custom: list[HelpSection] = []
+        builtin_options: list[HelpSection] = []
+        for group in self._action_groups:
+            entries: list[HelpEntry] = []
+            holds_subcommands = False
+            for action in group._group_actions:
+                if action.help is argparse.SUPPRESS:
+                    continue
+                if isinstance(action, argparse._SubParsersAction):
+                    # The action itself is just a metavar; the useful
+                    # content is one pseudo-action per choice, carrying
+                    # the `help=` each add_parser call supplied.
+                    holds_subcommands = True
+                    entries.extend(
+                        HelpEntry(
+                            invocation=_metavar(choice) or choice.dest,
+                            help_text=choice.help or "",
+                        )
+                        for choice in action._get_subactions()
+                        if choice.help is not argparse.SUPPRESS
+                    )
+                    continue
+                entries.append(
+                    HelpEntry(invocation=_invocation(action), help_text=action.help or "")
+                )
+            if not entries:
+                continue
+            section = HelpSection(
+                title="Commands" if holds_subcommands else _section_title(group.title),
+                description=group.description,
+                entries=tuple(entries),
+            )
+            # argparse yields its two built-in groups first, which would
+            # otherwise open every grouped screen with a lone "-h,
+            # --help" before anything the reader came for. Positionals
+            # stay first (they are the command's subject); the options
+            # bucket sinks to the bottom.
+            if group is self._positionals:
+                positionals.append(section)
+            elif group is self._optionals:
+                builtin_options.append(section)
+            else:
+                custom.append(section)
+        return HelpView(
+            usage=self._unwrapped_usage(),
+            prog=self.prog,
+            description=self.description,
+            sections=tuple(positionals + custom + builtin_options),
+            examples=self.examples,
+        )
+
+    def _unwrapped_usage(self) -> str:
+        """Synthesise the usage text as a single unwrapped line.
+
+        argparse builds the usage string, which is genuinely useful —
+        it knows which arguments are optional, which are mutually
+        exclusive, and how to notate both. But it also wraps it, and at
+        a narrow width its fixed continuation indent overflows. Asking
+        for it at an effectively unbounded width yields one long line
+        for ``ui.py`` to wrap properly.
+
+        Returns:
+            The usage text, without argparse's ``usage: `` prefix.
+        """
+        formatter = argparse.HelpFormatter(prog=self.prog, width=_UNBOUNDED_WIDTH)
+        formatter.add_usage(self.usage, self._actions, self._mutually_exclusive_groups)
+        return formatter.format_help().removeprefix("usage: ").strip()
+
+
+def _section_title(title: str | None) -> str:
+    """Capitalise an argparse group title for display.
+
+    argparse names its two built-in groups ``"positional arguments"``
+    and ``"options"``; the groups added here are already written as
+    headings. Returns a heading either way.
+
+    Args:
+        title: The group's title, if it has one.
+
+    Returns:
+        A display heading.
+    """
+    if not title:
+        return "Options"
+    return title[0].upper() + title[1:]
+
+
+def _invocation(action: argparse.Action) -> str:
+    """Render how one action is written on the command line.
+
+    Args:
+        action: The argparse action.
+
+    Returns:
+        e.g. ``"-tf, --target-file FILE"``, or ``"directory"`` for a
+        positional.
+    """
+    if not action.option_strings:
+        return _metavar(action) or action.dest
+    if action.nargs == 0:
+        return ", ".join(action.option_strings)
+    return ", ".join(action.option_strings) + " " + (_metavar(action) or action.dest.upper())
+
+
+def _metavar(action: argparse.Action) -> str:
+    """One action's metavar as a single string.
+
+    argparse allows a tuple of metavars, one per value, for an action
+    taking several (``nargs=2``). Nothing here does, but the type is
+    part of the API and joining is the right answer if one ever appears.
+
+    Args:
+        action: The argparse action.
+
+    Returns:
+        The metavar, or "" if it has none.
+    """
+    if action.metavar is None:
+        return ""
+    if isinstance(action.metavar, tuple):
+        return " ".join(action.metavar)
+    return action.metavar
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,87 +286,93 @@ def main(argv: list[str] | None = None) -> int:
         return 130
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+def _build_parser() -> SecondEyeParser:
+    parser = SecondEyeParser(
         prog="secondeye",
         description="A scope-gated, passive HTTP/HTTPS recording proxy for offensive "
-        "security operators.",
+        "security operators. Terminate and record only the traffic you are scoped "
+        "for; everything else is relayed blind and never touched.",
+        examples=(
+            "# One-time setup: trust secondeye's CA in your browser.",
+            "secondeye ca install",
+            "# Check this machine is ready before an engagement.",
+            "secondeye doctor",
+            "# Terminal 1: run the daemon, chaining through Burp.",
+            "secondeye proxy start --target example.com --upstream-ca burp-ca.pem",
+            "# Terminal 2: record a window of traffic, then write it up.",
+            "secondeye capture start --name auth-flow",
+            "secondeye capture stop",
+        ),
     )
     parser.add_argument("--version", "-V", action="version", version=f"%(prog)s {_VERSION}")
-    nouns = parser.add_subparsers(dest="noun", required=True)
+    nouns = parser.add_subparsers(dest="noun", required=True, metavar="COMMAND")
 
-    proxy = nouns.add_parser("proxy", help="Run and control the recording proxy daemon.")
-    proxy_verbs = proxy.add_subparsers(dest="verb", required=True)
+    proxy = nouns.add_parser(
+        "proxy",
+        description="Run and control the recording proxy daemon. 'proxy start' runs "
+        "in the foreground and stays running for the whole engagement; 'stop' and "
+        "'status' are short-lived clients you run from another terminal.",
+        help="Run and control the recording proxy daemon.",
+        examples=(
+            "secondeye proxy start --target example.com --no-upstream",
+            "secondeye proxy status",
+            "secondeye proxy stop",
+        ),
+    )
+    proxy_verbs = proxy.add_subparsers(dest="verb", required=True, metavar="VERB")
 
     start = proxy_verbs.add_parser(
         "start",
         description="Start the secondeye daemon in the foreground. Stays running until "
-        "Ctrl+C or 'secondeye proxy stop', auto-flushing any active capture on exit.",
-        help="Start the secondeye daemon in the foreground. Stays running until "
-        "Ctrl+C or 'secondeye proxy stop', auto-flushing any active capture on exit.",
+        "Ctrl+C or 'secondeye proxy stop', auto-flushing any active capture on exit. "
+        "Requires a scope — at least one of --target, --target-file, --target-regex "
+        "or --target-all — and an explicit decision about upstream TLS trust.",
+        help="Start the daemon in the foreground (the main entry point).",
+        examples=(
+            "# Chain in-scope traffic through Burp, pinning Burp's CA.",
+            "secondeye proxy start --target example.com --upstream-ca burp-ca.pem",
+            "# Connect straight to each destination instead.",
+            "secondeye proxy start --target example.com --no-upstream",
+            "# Several targets, plus a pattern a glob can't express.",
+            "secondeye proxy start --target example.com --target '*.corp.internal' \\",
+            "    --target-regex '^(dev|stg)-.*\\.example\\.com$' --no-upstream",
+        ),
     )
-    start.add_argument(
+
+    scope_group = start.add_argument_group(
+        "Scope",
+        description="What gets terminated and inspected. At least one is required; "
+        "everything you pass is OR'd together.",
+    )
+    scope_group.add_argument(
         "--target",
+        metavar="DOMAIN",
         action="append",
         default=[],
         help="A domain to scope in, matched exactly plus all subdomains, or an explicit "
-        "glob (e.g. '*.corp.internal'). Repeatable. At least one of --target, "
-        "--target-file, --target-regex, or --target-all is required.",
+        "glob (e.g. '*.corp.internal'). Repeatable.",
     )
-    start.add_argument(
+    scope_group.add_argument(
         "-tf",
         "--target-file",
+        metavar="FILE",
         action="append",
         default=[],
         type=Path,
         help="A line-delimited file of --target-style entries (one per line; blank "
         "lines and lines starting with # are ignored). Repeatable, and merges with "
-        "any --target values. Satisfies the 'at least one target' requirement on "
-        "its own.",
+        "any --target values.",
     )
-    start.add_argument(
+    scope_group.add_argument(
         "--target-regex",
+        metavar="REGEX",
         action="append",
         default=[],
         help="A regular expression to scope in, for patterns a glob can't express "
         "(alternation, numeric ranges, wildcards on both sides). Repeatable. Prefer "
         "--target/--target-file for the common case.",
     )
-    start.add_argument(
-        "--listen-address",
-        default=_DEFAULT_LISTEN,
-        help=f"The host:port the proxy listens on, as 'host:port' (e.g. '[::1]:8079' "
-        f"for IPv6). Host must be loopback (127.0.0.1 or ::1) — no override exists. "
-        f"Default: {_DEFAULT_LISTEN}.",
-    )
-    start.add_argument(
-        "--upstream-proxy",
-        default=_DEFAULT_UPSTREAM,
-        help=f"The upstream intercepting proxy's host:port (e.g. Burp or ZAP) to chain "
-        f"in-scope traffic through. Ignored if --no-upstream is set. "
-        f"Default: {_DEFAULT_UPSTREAM}.",
-    )
-    start.add_argument(
-        "--no-upstream",
-        action="store_true",
-        help="Skip the upstream proxy entirely and connect directly to each "
-        "destination, with full system trust store validation on that leg.",
-    )
-    start.add_argument(
-        "--upstream-ca",
-        type=Path,
-        default=None,
-        help="PEM file of the upstream proxy's CA certificate, used to validate the "
-        "secondeye-to-upstream TLS leg. Mutually exclusive with --upstream-insecure. "
-        "See 'secondeye ca import-upstream' to fetch one.",
-    )
-    start.add_argument(
-        "--upstream-insecure",
-        action="store_true",
-        help="Skip TLS verification on the upstream leg only (logs a warning at "
-        "startup). Mutually exclusive with --upstream-ca.",
-    )
-    start.add_argument(
+    scope_group.add_argument(
         "--target-all",
         action="store_true",
         help="Bypass scope matching entirely: every domain is terminated/inspected "
@@ -176,16 +380,71 @@ def _build_parser() -> argparse.ArgumentParser:
         "third-party domains (OAuth/OIDC) that --target was never meant to "
         "enumerate. Recording still only happens while a capture is active.",
     )
-    start.add_argument(
+
+    upstream_group = start.add_argument_group(
+        "Upstream",
+        description="Whether in-scope traffic is chained through an intercepting "
+        "proxy, and how that leg's TLS is trusted. Exactly one trust decision is "
+        "required — there is no silent default.",
+    )
+    upstream_group.add_argument(
+        "--upstream-proxy",
+        metavar="HOST:PORT",
+        default=_DEFAULT_UPSTREAM,
+        help=f"The upstream intercepting proxy's host:port (e.g. Burp or ZAP) to chain "
+        f"in-scope traffic through. Default: {_DEFAULT_UPSTREAM}.",
+    )
+    # Exactly one, enforced here rather than only in
+    # proxy/upstream.py's validate_upstream_tls_config: a required
+    # mutually exclusive group puts the requirement in the usage line, so
+    # the enforcement and the help text can no longer drift apart. The
+    # library-level check stays as the invariant for any DaemonConfig
+    # built without going through this parser.
+    trust = upstream_group.add_mutually_exclusive_group(required=True)
+    trust.add_argument(
+        "--upstream-ca",
+        metavar="FILE",
+        type=Path,
+        default=None,
+        help="PEM file of the upstream proxy's CA certificate, used to validate the "
+        "secondeye-to-upstream TLS leg. See 'secondeye ca import-upstream' to fetch one.",
+    )
+    trust.add_argument(
+        "--upstream-insecure",
+        action="store_true",
+        help="Skip TLS verification on the upstream leg only (logs a warning at startup).",
+    )
+    trust.add_argument(
+        "--no-upstream",
+        action="store_true",
+        help="Skip the upstream proxy entirely and connect directly to each "
+        "destination, with full system trust store validation on that leg.",
+    )
+
+    output_group = start.add_argument_group(
+        "Listener and output",
+        description="Where the proxy listens, and where captures are written.",
+    )
+    output_group.add_argument(
+        "--listen-address",
+        metavar="HOST:PORT",
+        default=_DEFAULT_LISTEN,
+        help=f"The host:port the proxy listens on (e.g. '[::1]:8079' for IPv6). Host "
+        f"must be loopback (127.0.0.1 or ::1) — no override exists. "
+        f"Default: {_DEFAULT_LISTEN}.",
+    )
+    output_group.add_argument(
         "--captures-dir",
+        metavar="DIR",
         type=Path,
         default=None,
         help="Directory to write capture output into, so captures can live "
         "alongside your engagement notes instead of under the state directory. "
         "Default: <state-dir>/captures (~/.local/state/secondeye/captures).",
     )
-    start.add_argument(
+    output_group.add_argument(
         "--cluster-window",
+        metavar="MS",
         type=int,
         default=DEFAULT_CLUSTER_WINDOW_MS,
         help="Milliseconds within which a request is grouped with the page "
@@ -194,30 +453,46 @@ def _build_parser() -> argparse.ArgumentParser:
         "deduplication, which keys off request interval rather than this "
         f"window. Default: {DEFAULT_CLUSTER_WINDOW_MS}.",
     )
-    start.add_argument(
+    output_group.add_argument(
         "--max-connections",
+        metavar="N",
         type=int,
         default=256,
         help="Maximum number of simultaneous client connections the proxy will "
         "accept. Default: 256.",
     )
-    start.add_argument(
+
+    logging_group = start.add_argument_group(
+        "Logging",
+        description="Log verbosity on stderr. The startup banner is printed either way.",
+    )
+    verbosity = logging_group.add_mutually_exclusive_group()
+    verbosity.add_argument(
         "-v", "--verbose", action="store_true", help="Log at DEBUG level instead of INFO."
     )
-    start.add_argument(
+    verbosity.add_argument(
         "-q", "--quiet", action="store_true", help="Log at WARNING level instead of INFO."
     )
     start.set_defaults(handler=_cmd_proxy_start)
 
     proxy_verbs.add_parser(
         "stop",
-        description="Stop a running secondeye daemon from another terminal.",
-        help="Stop a running secondeye daemon from another terminal.",
+        description="Stop a running secondeye daemon from another terminal. Any "
+        "active capture is flushed to disk first, exactly as Ctrl+C would. "
+        "Requires a running daemon.",
+        help="Stop a running daemon from another terminal.",
+        examples=("secondeye proxy stop",),
     ).set_defaults(handler=_cmd_proxy_stop)
     status = proxy_verbs.add_parser(
         "status",
-        description="Report whether a daemon is running, its scope, and active capture.",
+        description="Report whether a daemon is running, its scope, its upstream, "
+        "and the active capture's live request count. Exits 0 whether or not one is "
+        "running — 'is it running?' is a question, not an error.",
         help="Report whether a daemon is running, its scope, and active capture.",
+        examples=(
+            "secondeye proxy status",
+            "secondeye proxy status --json | jq .active_capture",
+        ),
     )
     status.add_argument(
         "--json",
@@ -227,17 +502,29 @@ def _build_parser() -> argparse.ArgumentParser:
     status.set_defaults(handler=_cmd_proxy_status)
 
     capture = nouns.add_parser(
-        "capture", help="Control recording windows against a running proxy daemon."
+        "capture",
+        description="Control recording windows against a running proxy daemon, and "
+        "revisit finished ones. 'start' and 'stop' need a running daemon; 'list', "
+        "'analyze' and 'recover' read the captures directory and need no daemon.",
+        help="Control recording windows, and revisit finished captures.",
+        examples=(
+            "secondeye capture start --name auth-flow",
+            "secondeye capture stop",
+            "secondeye capture list",
+        ),
     )
-    capture_verbs = capture.add_subparsers(dest="verb", required=True)
+    capture_verbs = capture.add_subparsers(dest="verb", required=True, metavar="VERB")
 
     cap_start = capture_verbs.add_parser(
         "start",
-        description="Start recording a named window of in-scope traffic.",
+        description="Start recording a named window of in-scope traffic. Requires a "
+        "running daemon; only one capture may be active at a time.",
         help="Start recording a named window of in-scope traffic.",
+        examples=("secondeye capture start --name auth-flow",),
     )
     cap_start.add_argument(
         "--name",
+        metavar="LABEL",
         required=True,
         help="A label for this capture. Must be unique among today's captures for the "
         "current target; used in the output directory name.",
@@ -246,18 +533,25 @@ def _build_parser() -> argparse.ArgumentParser:
 
     capture_verbs.add_parser(
         "stop",
-        description="Stop the active capture and write raw.har/manifest.json/ANALYSIS.md.",
-        help="Stop the active capture and write raw.har/manifest.json/ANALYSIS.md.",
+        description="Stop the active capture and write raw.har, manifest.json and "
+        "ANALYSIS.md into its output directory. Requires a running daemon.",
+        help="Stop the active capture and write its three output files.",
+        examples=("secondeye capture stop",),
     ).set_defaults(handler=_cmd_capture_stop)
     cap_list = capture_verbs.add_parser(
         "list",
         description="List captures on disk, newest first. Reads the captures "
         "directory, so it works with no daemon running and shows captures from "
-        "previous runs too.",
+        "previous runs too. No daemon required.",
         help="List captures on disk, newest first (no daemon required).",
+        examples=(
+            "secondeye capture list",
+            "secondeye capture list --captures-dir ~/engagements/acme/captures",
+        ),
     )
     cap_list.add_argument(
         "--captures-dir",
+        metavar="DIR",
         type=Path,
         default=None,
         help="Captures directory to list. Default: <state-dir>/captures.",
@@ -276,14 +570,22 @@ def _build_parser() -> argparse.ArgumentParser:
         "analysis renderer, or to re-cluster it with a different "
         "--cluster-window. raw.har is never modified. No daemon required.",
         help="Re-render a capture's ANALYSIS.md/manifest.json from its raw.har.",
+        examples=(
+            "secondeye capture analyze ~/.local/state/secondeye/captures/2026-11-20_example-com/"
+            "auth-flow",
+            "# Re-group with a wider navigation window.",
+            "secondeye capture analyze ./auth-flow --cluster-window 5000",
+        ),
     )
     cap_analyze.add_argument(
         "directory",
+        metavar="DIRECTORY",
         type=Path,
         help="A capture directory containing raw.har and manifest.json.",
     )
     cap_analyze.add_argument(
         "--cluster-window",
+        metavar="MS",
         type=int,
         default=None,
         help="Clustering window in milliseconds for this re-render: how close a "
@@ -298,14 +600,20 @@ def _build_parser() -> argparse.ArgumentParser:
         "crashed daemon left behind, writing the three output files that "
         "'capture stop' would have. No daemon required.",
         help="Rebuild a capture from a crashed daemon's leftover buffer.",
+        examples=(
+            "secondeye capture recover ./2026-11-20_example-com/auth-flow",
+            f"secondeye capture recover ./auth-flow/{BUFFER_FILENAME} --keep-buffer",
+        ),
     )
     cap_recover.add_argument(
         "path",
+        metavar="PATH",
         type=Path,
         help=f"A capture directory containing a {BUFFER_FILENAME}, or that file itself.",
     )
     cap_recover.add_argument(
         "--name",
+        metavar="LABEL",
         default=None,
         help="Capture name to record in the outputs. Default: the capture directory's own name.",
     )
@@ -317,6 +625,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     cap_recover.add_argument(
         "--cluster-window",
+        metavar="MS",
         type=int,
         default=DEFAULT_CLUSTER_WINDOW_MS,
         help=f"Clustering window in milliseconds. Default: {DEFAULT_CLUSTER_WINDOW_MS}.",
@@ -331,14 +640,22 @@ def _build_parser() -> argparse.ArgumentParser:
         "nothing — in particular it never generates a CA. Exits non-zero if any "
         "check fails; warnings alone exit 0.",
         help="Check whether this machine is ready to capture, and say what isn't.",
+        examples=(
+            "secondeye doctor",
+            "# Check the direct-connect setup rather than a Burp chain.",
+            "secondeye doctor --no-upstream",
+            "secondeye doctor --json",
+        ),
     )
     doctor.add_argument(
         "--listen-address",
+        metavar="HOST:PORT",
         default=_DEFAULT_LISTEN,
         help=f"The host:port to test for availability. Default: {_DEFAULT_LISTEN}.",
     )
     doctor.add_argument(
         "--upstream-proxy",
+        metavar="HOST:PORT",
         default=_DEFAULT_UPSTREAM,
         help=f"The upstream proxy to test for reachability. Ignored with "
         f"--no-upstream. Default: {_DEFAULT_UPSTREAM}.",
@@ -350,6 +667,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     doctor.add_argument(
         "--upstream-ca",
+        metavar="FILE",
         type=Path,
         default=None,
         help="Check that this upstream CA file exists and is readable.",
@@ -360,31 +678,50 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Check the setup that skips upstream TLS verification.",
     )
     doctor.add_argument(
-        "--json",
-        action="store_true",
-        help="Emit the report as JSON on stdout instead of a table, for scripting.",
-    )
-    doctor.add_argument(
         "--captures-dir",
+        metavar="DIR",
         type=Path,
         default=None,
         help="Captures directory to test for writability. Default: <state-dir>/captures.",
     )
+    doctor.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the report as JSON on stdout instead of a table, for scripting.",
+    )
     doctor.set_defaults(handler=_cmd_doctor)
 
-    ca = nouns.add_parser("ca", help="Manage secondeye's root CA and upstream trust.")
-    ca_verbs = ca.add_subparsers(dest="verb", required=True)
+    ca = nouns.add_parser(
+        "ca",
+        description="Manage secondeye's root CA and upstream trust. secondeye "
+        "generates its own root CA on first use and signs a leaf per in-scope host; "
+        "your browser has to trust that root before in-scope HTTPS will work.",
+        help="Manage secondeye's root CA and upstream trust.",
+        examples=(
+            "secondeye ca install",
+            "secondeye ca status",
+            "secondeye ca import-upstream --from-burp",
+        ),
+    )
+    ca_verbs = ca.add_subparsers(dest="verb", required=True, metavar="VERB")
 
     ca_export = ca_verbs.add_parser(
         "export",
-        description="Export secondeye's root CA for import into a browser/device trust store.",
-        help="Export secondeye's root CA for import into a browser/device trust store.",
+        description="Export secondeye's root CA for import into a browser/device "
+        "trust store. The certificate goes to stdout, so redirect it to a file. "
+        "Generates the CA if this is the first run.",
+        help="Export secondeye's root CA to stdout.",
+        examples=(
+            "secondeye ca export > secondeye-ca.pem",
+            "secondeye ca export --format der > secondeye-ca.der",
+        ),
     )
     ca_export.add_argument(
         "--format",
+        metavar="ENCODING",
         choices=["der", "pem"],
         default="pem",
-        help="Output encoding, written to stdout. Default: pem.",
+        help="Output encoding, written to stdout: der or pem. Default: pem.",
     )
     ca_export.set_defaults(handler=_cmd_ca_export)
 
@@ -396,6 +733,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "sudo and is never written automatically — you should see the command "
         "that touches your root trust before it runs.",
         help="Trust secondeye's CA in Firefox/Chromium, and print system-store steps.",
+        examples=(
+            "secondeye ca install",
+            "# See what would change, without changing it.",
+            "secondeye ca install --dry-run",
+            "secondeye ca install --remove",
+        ),
     )
     ca_install.add_argument(
         "--remove",
@@ -423,18 +766,23 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ca_verbs.add_parser(
         "status",
-        description="Report the persisted CA's fingerprint and validity, without "
-        "generating one if none exists yet.",
-        help="Report the persisted CA's fingerprint and validity, without "
-        "generating one if none exists yet.",
+        description="Report the persisted CA's fingerprint and validity. Read-only: "
+        "unlike 'ca export' and 'proxy start', this never generates a CA as a side "
+        "effect of being run.",
+        help="Report the persisted CA's fingerprint and validity.",
+        examples=("secondeye ca status",),
     ).set_defaults(handler=_cmd_ca_status)
 
     ca_import = ca_verbs.add_parser(
         "import-upstream",
         description="Fetch an upstream intercepting proxy's CA certificate for use "
-        "with 'proxy start --upstream-ca'.",
-        help="Fetch an upstream intercepting proxy's CA certificate for use "
-        "with 'proxy start --upstream-ca'.",
+        "with 'proxy start --upstream-ca'. Requires the upstream proxy to be running.",
+        help="Fetch an upstream proxy's CA certificate for --upstream-ca.",
+        examples=(
+            "secondeye ca import-upstream --from-burp",
+            "secondeye ca import-upstream --from-burp --upstream-proxy 127.0.0.1:8081 \\",
+            "    --output ~/engagements/acme/burp-ca.pem",
+        ),
     )
     ca_import.add_argument(
         "--from-burp",
@@ -445,11 +793,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ca_import.add_argument(
         "--upstream-proxy",
+        metavar="HOST:PORT",
         default=_DEFAULT_UPSTREAM,
         help=f"The upstream proxy's host:port to fetch the CA from. Default: {_DEFAULT_UPSTREAM}.",
     )
     ca_import.add_argument(
         "--output",
+        metavar="FILE",
         type=Path,
         default=Path("burp-ca.pem"),
         help="Where to write the converted PEM certificate. Default: burp-ca.pem.",

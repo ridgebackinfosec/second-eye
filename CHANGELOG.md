@@ -3,7 +3,48 @@
 All notable changes to this project are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.4.0] - 2026-11-21
+
+### Added
+- **Examples on every help screen.** `secondeye --help` opens with the
+  four-step first-run workflow; each subcommand carries one or two real
+  invocations. Previously the only worked examples lived in `README.md`, which
+  is not what an operator reads mid-engagement.
+- **Grouped flags on `proxy start`.** Its thirteen flags were one
+  undifferentiated list; they are now split into Scope, Upstream, Listener and
+  output, and Logging, each with a line saying what the group decides.
+- **Help renders through `ui.py`** like every other human-facing surface, in
+  the same light-terminal-first palette — the 16 ANSI colours plus
+  `bold`/`dim`, nothing absolute. `NO_COLOR`, `FORCE_COLOR` and a non-tty
+  stream are honoured exactly as elsewhere, so piped and redirected help stays
+  plain text.
+- **Generated help blocks in `docs/CLI.md` for every subcommand.** `doctor`,
+  `ca install`, `ca status`, `ca import-upstream`, `proxy stop` and
+  `capture list`/`analyze`/`recover` had no generated block, so their help
+  could drift with no test failing. Twenty examples are now checked, up from
+  twelve.
+
+### Changed
+- **`proxy start` now requires exactly one of `--upstream-ca`,
+  `--upstream-insecure` or `--no-upstream` at argument-parsing time.** The
+  requirement was already enforced — it just wasn't documented anywhere, so
+  `secondeye proxy start --target example.com` failed with an error `--help`
+  gave no warning of. As a required mutually exclusive group it appears in the
+  usage line and is rejected before the daemon starts.
+- Informative metavars throughout: `--target DOMAIN`, `-tf FILE`,
+  `--listen-address HOST:PORT`, `--cluster-window MS` and so on, in place of
+  argparse's shouted `TARGET`/`TARGET_FILE`/`LISTEN_ADDRESS`.
+- `proxy`, `capture` and `ca` each explain what the noun is for instead of
+  printing a bare list of verbs; `capture` subcommands now say whether they
+  need a running daemon.
+
+### Fixed
+- **`--no-upstream` combined with `--upstream-ca` is now rejected rather than
+  silently ignoring the CA.** An operator could believe they had pinned the
+  upstream leg while nothing was validating it. A trust flag that is quietly
+  discarded is worse than one that is refused.
+- **`-v` and `-q` together are now an error** instead of silently resolving in
+  favour of `-v`.
 
 ## [1.3.0] - 2026-11-19
 

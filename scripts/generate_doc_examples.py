@@ -658,8 +658,48 @@ def _examples() -> list[Example]:
             targets=("README.md",),
         ),
         Example(
+            name="cli-help-capture-list",
+            render=lambda: _cli_help("capture", "list"),
+            targets=("docs/CLI.md",),
+        ),
+        Example(
+            name="cli-help-capture-analyze",
+            render=lambda: _cli_help("capture", "analyze"),
+            targets=("docs/CLI.md",),
+        ),
+        Example(
+            name="cli-help-capture-recover",
+            render=lambda: _cli_help("capture", "recover"),
+            targets=("docs/CLI.md",),
+        ),
+        Example(
+            name="cli-help-doctor",
+            render=lambda: _cli_help("doctor"),
+            targets=("docs/CLI.md",),
+        ),
+        Example(
             name="cli-help-ca-export",
             render=lambda: _cli_help("ca", "export"),
+            targets=("docs/CLI.md",),
+        ),
+        Example(
+            name="cli-help-ca-install",
+            render=lambda: _cli_help("ca", "install"),
+            targets=("docs/CLI.md",),
+        ),
+        Example(
+            name="cli-help-ca-status",
+            render=lambda: _cli_help("ca", "status"),
+            targets=("docs/CLI.md",),
+        ),
+        Example(
+            name="cli-help-ca-import-upstream",
+            render=lambda: _cli_help("ca", "import-upstream"),
+            targets=("docs/CLI.md",),
+        ),
+        Example(
+            name="cli-help-proxy-stop",
+            render=lambda: _cli_help("proxy", "stop"),
             targets=("docs/CLI.md",),
         ),
     ]

@@ -451,7 +451,7 @@ capture:
 
 <!-- BEGIN GENERATED: proxy-status -->
 ```text
-▌ secondeye 1.3.0   running   127.0.0.1:18079  →  none (--no-upstream)
+▌ secondeye 1.4.0   running   127.0.0.1:18079  →  none (--no-upstream)
 
   scope     127.0.0.1
   capture   ● auth-flow-test   3 requests   since 09:15:00
